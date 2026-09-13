@@ -173,10 +173,12 @@
   var gradeTapLocked = false;
   var gradeSync = {
     storageKey: 'flashcards.pendingGrades.v1',
+    batchSize: 5,
     queue: [],
     sending: false,
     retryTimer: null,
-    retrying: false
+    retrying: false,
+    inFlightEventIds: []
   };
 
   function $(id) { return document.getElementById(id); }
@@ -202,8 +204,21 @@
     try {
       var saved = JSON.parse(localStorage.getItem(gradeSync.storageKey) || '[]');
       if (Array.isArray(saved)) {
-        gradeSync.queue = saved.filter(function (item) {
-          return item && item.eventId && Number(item.row) >= 2 && typeof item.correct === 'boolean';
+        gradeSync.queue = saved.map(function (item) {
+          item = item || {};
+          return {
+            eventId: item.eventId || '',
+            cardId: item.cardId == null ? '' : String(item.cardId),
+            rowHint: Number(item.rowHint != null ? item.rowHint : item.row),
+            correct: item.correct,
+            deckKey: item.deckKey == null ? null : String(item.deckKey),
+            wasFresh: !!item.wasFresh,
+            wasDue: !!item.wasDue,
+            wasWrongToday: !!item.wasWrongToday,
+            attempts: Number(item.attempts) || 0
+          };
+        }).filter(function (item) {
+          return item.eventId && item.rowHint >= 2 && typeof item.correct === 'boolean';
         });
       }
     } catch (err) {
@@ -225,16 +240,54 @@
     return Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 11);
   }
 
+  function normalizeDateText(value) {
+    var text = String(value || '').trim();
+    var match = text.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+    if (!match) return text;
+    return match[1] + '-' + ('0' + match[2]).slice(-2) + '-' + ('0' + match[3]).slice(-2);
+  }
+
   function enqueueGrade(card, correct) {
+    var wasFresh = card.box === '' || card.box == null;
+    var wasDue = !wasFresh;
+    var wasWrongToday = !!(sessionData && normalizeDateText(card.last_wrong) === sessionData.today);
+
     gradeSync.queue.push({
       eventId: makeGradeEventId(),
-      row: Number(card._row),
+      cardId: card.id == null ? '' : String(card.id),
+      rowHint: Number(card._row),
       correct: !!correct,
+      deckKey: currentDeck ? currentDeck.key : null,
+      wasFresh: wasFresh,
+      wasDue: wasDue,
+      wasWrongToday: wasWrongToday,
       attempts: 0
     });
+
+    applyOptimisticGrade(card, !!correct, wasFresh, wasDue, wasWrongToday);
     persistGradeQueue();
     updateSyncStatus();
     processGradeQueue();
+  }
+
+  function applyOptimisticGrade(card, correct, wasFresh, wasDue, wasWrongToday) {
+    if (!sessionData || !sessionData.counts) return;
+
+    if (wasFresh) sessionData.counts.fresh = Math.max(0, Number(sessionData.counts.fresh || 0) - 1);
+    if (wasDue) sessionData.counts.due = Math.max(0, Number(sessionData.counts.due || 0) - 1);
+    if (!correct && !wasWrongToday) {
+      sessionData.counts.mistakesToday = Number(sessionData.counts.mistakesToday || 0) + 1;
+    }
+
+    var currentBox = Number(card.box) || 0;
+    card.box = correct ? Math.min(5, currentBox > 0 ? currentBox + 1 : 2) : 1;
+    card.last_seen = sessionData.today || card.last_seen;
+    if (correct) {
+      card.right = (Number(card.right) || 0) + 1;
+    } else {
+      card.wrong = (Number(card.wrong) || 0) + 1;
+      card.last_wrong = sessionData.today || card.last_wrong;
+    }
   }
 
   function processGradeQueue() {
@@ -248,34 +301,79 @@
       gradeSync.retryTimer = null;
     }
 
-    var item = gradeSync.queue[0];
+    var batch = gradeSync.queue.slice(0, gradeSync.batchSize);
+    var payload = batch.map(function (item) {
+      return {
+        eventId: item.eventId,
+        cardId: item.cardId,
+        rowHint: item.rowHint,
+        correct: item.correct
+      };
+    });
+
     gradeSync.sending = true;
     gradeSync.retrying = false;
+    gradeSync.inFlightEventIds = batch.map(function (item) { return item.eventId; });
     updateSyncStatus();
 
     google.script.run
-      .withSuccessHandler(function () {
+      .withSuccessHandler(function (result) {
         gradeSync.sending = false;
         gradeSync.retrying = false;
-        gradeSync.queue.shift();
+        gradeSync.inFlightEventIds = [];
+
+        result = result || {};
+        var done = {};
+        (result.completedEventIds || []).forEach(function (id) { done[id] = true; });
+        (result.failed || []).forEach(function (failure) {
+          if (failure && failure.eventId) done[failure.eventId] = true;
+        });
+
+        // 正常レスポンスなのにID一覧がない場合は、古い/不整合なデプロイと判断して再試行する。
+        if (!Object.keys(done).length) {
+          retryGradeBatch(batch);
+          return;
+        }
+
+        gradeSync.queue = gradeSync.queue.filter(function (item) { return !done[item.eventId]; });
         persistGradeQueue();
         updateSyncStatus();
+
+        if (result.failed && result.failed.length) {
+          showToast('採点 ' + result.failed.length + '件を同期できませんでした。カードIDを確認してください。');
+        }
+
+        maybeRefreshHomeAfterSync();
         processGradeQueue();
       })
       .withFailureHandler(function () {
         gradeSync.sending = false;
-        gradeSync.retrying = true;
-        item.attempts = (Number(item.attempts) || 0) + 1;
-        persistGradeQueue();
-        updateSyncStatus();
-
-        var delay = Math.min(30000, 1000 * Math.pow(2, Math.min(item.attempts - 1, 5)));
-        gradeSync.retryTimer = setTimeout(function () {
-          gradeSync.retryTimer = null;
-          processGradeQueue();
-        }, delay);
+        gradeSync.inFlightEventIds = [];
+        retryGradeBatch(batch);
       })
-      .gradeCardQueued(item.row, item.correct, item.eventId);
+      .gradeCardsQueued(payload);
+  }
+
+  function retryGradeBatch(batch) {
+    gradeSync.retrying = true;
+    var maxAttempts = 0;
+    var ids = {};
+    batch.forEach(function (item) { ids[item.eventId] = true; });
+
+    gradeSync.queue.forEach(function (item) {
+      if (!ids[item.eventId]) return;
+      item.attempts = (Number(item.attempts) || 0) + 1;
+      maxAttempts = Math.max(maxAttempts, item.attempts);
+    });
+
+    persistGradeQueue();
+    updateSyncStatus();
+
+    var delay = Math.min(30000, 1000 * Math.pow(2, Math.min(Math.max(maxAttempts, 1) - 1, 5)));
+    gradeSync.retryTimer = setTimeout(function () {
+      gradeSync.retryTimer = null;
+      processGradeQueue();
+    }, delay);
   }
 
   function updateSyncStatus() {
@@ -297,6 +395,20 @@
     } else {
       el.textContent = '同期待ち ' + pending + '件';
     }
+  }
+
+  function hasPendingForDeck(deckKey) {
+    var key = deckKey == null ? '' : String(deckKey);
+    return gradeSync.queue.some(function (item) {
+      // 旧形式の未送信イベントはデッキ情報がないため、安全側で全デッキの保留扱いにする。
+      return item.deckKey == null || String(item.deckKey) === key;
+    });
+  }
+
+  function maybeRefreshHomeAfterSync() {
+    if (!currentDeck || $('home').classList.contains('hidden')) return;
+    if (hasPendingForDeck(currentDeck.key)) return;
+    refreshHomeFromServer(false);
   }
 
   function loadDecks() {
@@ -348,9 +460,41 @@
       button.appendChild(meta);
       button.addEventListener('click', function () {
         currentDeck = { key: deck.key || '', name: deck.name || '未分類' };
+        sessionData = null;
         loadHome();
       });
       list.appendChild(button);
+    });
+  }
+
+  function renderHome(data) {
+    if (!data || !data.counts || !currentDeck) return;
+    $('selected-deck-name').textContent = currentDeck.name || '未分類';
+    $('due-count').textContent = data.counts.due || 0;
+    $('new-count').textContent = data.counts.fresh || 0;
+    $('mistake-count').textContent = data.counts.mistakesToday || 0;
+    $('flag-count').textContent = data.counts.flagged || 0;
+    $('mistakes-btn').classList.toggle('hidden', !(data.counts.mistakesToday > 0));
+    $('sheet-link').href = data.sheetUrl || '#';
+    setScreen('home');
+  }
+
+  function refreshHomeFromServer(showLoading) {
+    if (!currentDeck) return;
+    var requestedDeckKey = currentDeck.key;
+    if (showLoading) setScreen('loading');
+
+    callServer('getSession', [requestedDeckKey], function (data) {
+      if (!currentDeck || currentDeck.key !== requestedDeckKey) return;
+      // 未同期回答がある間は、サーバーの一時的に古い値でローカル表示を上書きしない。
+      if (hasPendingForDeck(requestedDeckKey)) {
+        if (sessionData) renderHome(sessionData);
+        return;
+      }
+
+      sessionData = data;
+      if (data.deck) currentDeck = data.deck;
+      renderHome(data);
     });
   }
 
@@ -360,19 +504,14 @@
       return;
     }
 
-    setScreen('loading');
-    callServer('getSession', [currentDeck.key], function (data) {
-      sessionData = data;
-      if (data.deck) currentDeck = data.deck;
-      $('selected-deck-name').textContent = currentDeck.name || '未分類';
-      $('due-count').textContent = data.counts.due || 0;
-      $('new-count').textContent = data.counts.fresh || 0;
-      $('mistake-count').textContent = data.counts.mistakesToday || 0;
-      $('flag-count').textContent = data.counts.flagged || 0;
-      $('mistakes-btn').classList.toggle('hidden', !(data.counts.mistakesToday > 0));
-      $('sheet-link').href = data.sheetUrl || '#';
-      setScreen('home');
-    });
+    // セッション中に更新したローカル状態を先に描画するので、同期完了を待たずホームへ戻れる。
+    if (sessionData && sessionData.deck && sessionData.deck.key === currentDeck.key) {
+      renderHome(sessionData);
+      if (!hasPendingForDeck(currentDeck.key)) refreshHomeFromServer(false);
+      return;
+    }
+
+    refreshHomeFromServer(true);
   }
 
   window.showHome = loadHome;
@@ -424,14 +563,13 @@
 
   function currentCard() { return queue[index] || null; }
 
-  // CSV内の識別子はデータとして残しつつ、学習画面では先頭の問題番号だけ隠す。
-  // 例: 【A1-0183c】 NTEとは？ -> NTEとは？
   function displayQuestion(text) {
     return String(text || '').replace(/^\s*(?:【[A-Za-z0-9_-]+】|\[[A-Za-z0-9_-]+\])\s*/, '');
   }
 
   function renderCard() {
     if (index >= queue.length) {
+      if (mode === 'normal' && sessionData) sessionData.queue = [];
       showToast('復習が終わりました。');
       loadHome();
       return;
@@ -475,14 +613,18 @@
 
     gradeTapLocked = true;
 
-    // 通常学習だけ学習履歴を保存する。保存完了は待たず、次の問題を即表示する。
     if (mode === 'normal') enqueueGrade(card, !!correct);
 
     index++;
+    if (mode === 'normal' && sessionData) sessionData.queue = queue.slice(index);
     renderCard();
 
-    // 誤ダブルタップで次のカードまで採点しないための短いローカルロック。
     setTimeout(function () { gradeTapLocked = false; }, 180);
+  }
+
+  function quitSession() {
+    if (mode === 'normal' && sessionData) sessionData.queue = queue.slice(index);
+    loadHome();
   }
 
   function toggleFlag() {
@@ -547,7 +689,7 @@
   $('reveal-btn').addEventListener('click', reveal);
   $('wrong-btn').addEventListener('click', function () { grade(false); });
   $('right-btn').addEventListener('click', function () { grade(true); });
-  $('quit-btn').addEventListener('click', loadHome);
+  $('quit-btn').addEventListener('click', quitSession);
   $('flag-btn').addEventListener('click', toggleFlag);
   $('edit-btn').addEventListener('click', openEditor);
   $('edit-cancel').addEventListener('click', closeEditor);
