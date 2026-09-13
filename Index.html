@@ -25,6 +25,8 @@
     header{text-align:center;padding:10px 0 18px}
     header h1{font-size:22px;margin:0}
     header p{font-size:13px;color:var(--muted);margin:5px 0 0}
+    .sync-status{font-size:11px;color:var(--muted);margin-top:5px;min-height:16px}
+    .sync-status.warn{color:var(--orange)}
     .screen-title{font-size:18px;font-weight:800;margin:2px 0 12px}
     .screen-note{font-size:13px;color:var(--muted);line-height:1.6;margin:-4px 0 16px}
     .deck-list{display:flex;flex-direction:column;gap:10px}
@@ -80,6 +82,7 @@
     <header>
       <h1>🎴 単語帳</h1>
       <p>Google Sheets と同期するシンプルな復習アプリ</p>
+      <div id="sync-status" class="sync-status hidden" aria-live="polite"></div>
     </header>
 
     <main id="loading"><div class="spinner"></div></main>
@@ -167,6 +170,14 @@
   var revealed = false;
   var mode = 'normal';
   var busy = false;
+  var gradeTapLocked = false;
+  var gradeSync = {
+    storageKey: 'flashcards.pendingGrades.v1',
+    queue: [],
+    sending: false,
+    retryTimer: null,
+    retrying: false
+  };
 
   function $(id) { return document.getElementById(id); }
 
@@ -185,6 +196,107 @@
     ['loading', 'decks', 'home', 'empty', 'session'].forEach(function (name) {
       $(name).classList.toggle('hidden', name !== id);
     });
+  }
+
+  function restoreGradeQueue() {
+    try {
+      var saved = JSON.parse(localStorage.getItem(gradeSync.storageKey) || '[]');
+      if (Array.isArray(saved)) {
+        gradeSync.queue = saved.filter(function (item) {
+          return item && item.eventId && Number(item.row) >= 2 && typeof item.correct === 'boolean';
+        });
+      }
+    } catch (err) {
+      gradeSync.queue = [];
+    }
+    persistGradeQueue();
+    updateSyncStatus();
+  }
+
+  function persistGradeQueue() {
+    try {
+      localStorage.setItem(gradeSync.storageKey, JSON.stringify(gradeSync.queue));
+    } catch (err) {
+      // localStorage が使えなくても学習自体は続けられる。
+    }
+  }
+
+  function makeGradeEventId() {
+    return Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 11);
+  }
+
+  function enqueueGrade(card, correct) {
+    gradeSync.queue.push({
+      eventId: makeGradeEventId(),
+      row: Number(card._row),
+      correct: !!correct,
+      attempts: 0
+    });
+    persistGradeQueue();
+    updateSyncStatus();
+    processGradeQueue();
+  }
+
+  function processGradeQueue() {
+    if (gradeSync.sending || !gradeSync.queue.length) {
+      updateSyncStatus();
+      return;
+    }
+
+    if (gradeSync.retryTimer) {
+      clearTimeout(gradeSync.retryTimer);
+      gradeSync.retryTimer = null;
+    }
+
+    var item = gradeSync.queue[0];
+    gradeSync.sending = true;
+    gradeSync.retrying = false;
+    updateSyncStatus();
+
+    google.script.run
+      .withSuccessHandler(function () {
+        gradeSync.sending = false;
+        gradeSync.retrying = false;
+        gradeSync.queue.shift();
+        persistGradeQueue();
+        updateSyncStatus();
+        processGradeQueue();
+      })
+      .withFailureHandler(function () {
+        gradeSync.sending = false;
+        gradeSync.retrying = true;
+        item.attempts = (Number(item.attempts) || 0) + 1;
+        persistGradeQueue();
+        updateSyncStatus();
+
+        var delay = Math.min(30000, 1000 * Math.pow(2, Math.min(item.attempts - 1, 5)));
+        gradeSync.retryTimer = setTimeout(function () {
+          gradeSync.retryTimer = null;
+          processGradeQueue();
+        }, delay);
+      })
+      .gradeCard(item.row, item.correct, false, item.eventId);
+  }
+
+  function updateSyncStatus() {
+    var el = $('sync-status');
+    var pending = gradeSync.queue.length;
+    if (!pending) {
+      el.textContent = '';
+      el.classList.add('hidden');
+      el.classList.remove('warn');
+      return;
+    }
+
+    el.classList.remove('hidden');
+    el.classList.toggle('warn', gradeSync.retrying);
+    if (gradeSync.retrying) {
+      el.textContent = '同期待ち ' + pending + '件（自動再試行中）';
+    } else if (gradeSync.sending) {
+      el.textContent = '同期中 ' + pending + '件';
+    } else {
+      el.textContent = '同期待ち ' + pending + '件';
+    }
   }
 
   function loadDecks() {
@@ -357,15 +469,20 @@
   }
 
   function grade(correct) {
-    if (busy) return;
-    busy = true;
-    var practice = mode !== 'normal';
+    if (gradeTapLocked) return;
     var card = currentCard();
-    callServer('gradeCard', [card._row, !!correct, practice], function () {
-      busy = false;
-      index++;
-      renderCard();
-    });
+    if (!card) return;
+
+    gradeTapLocked = true;
+
+    // 通常学習だけ学習履歴を保存する。保存完了は待たず、次の問題を即表示する。
+    if (mode === 'normal') enqueueGrade(card, !!correct);
+
+    index++;
+    renderCard();
+
+    // 誤ダブルタップで次のカードまで採点しないための短いローカルロック。
+    setTimeout(function () { gradeTapLocked = false; }, 180);
   }
 
   function toggleFlag() {
@@ -439,6 +556,17 @@
     if (event.target === $('edit-overlay')) closeEditor();
   });
 
+  window.addEventListener('online', function () {
+    gradeSync.retrying = false;
+    if (gradeSync.retryTimer) {
+      clearTimeout(gradeSync.retryTimer);
+      gradeSync.retryTimer = null;
+    }
+    processGradeQueue();
+  });
+
+  restoreGradeQueue();
+  processGradeQueue();
   loadDecks();
 }());
 </script>
