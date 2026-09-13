@@ -267,7 +267,14 @@
     applyOptimisticGrade(card, !!correct, wasFresh, wasDue, wasWrongToday);
     persistGradeQueue();
     updateSyncStatus();
-    processGradeQueue();
+  }
+
+  function scheduleGradeSyncAfterPaint() {
+    requestAnimationFrame(function () {
+      setTimeout(function () {
+        processGradeQueue();
+      }, 0);
+    });
   }
 
   function applyOptimisticGrade(card, correct, wasFresh, wasDue, wasWrongToday) {
@@ -329,7 +336,6 @@
           if (failure && failure.eventId) done[failure.eventId] = true;
         });
 
-        // 正常レスポンスなのにID一覧がない場合は、古い/不整合なデプロイと判断して再試行する。
         if (!Object.keys(done).length) {
           retryGradeBatch(batch);
           return;
@@ -400,7 +406,6 @@
   function hasPendingForDeck(deckKey) {
     var key = deckKey == null ? '' : String(deckKey);
     return gradeSync.queue.some(function (item) {
-      // 旧形式の未送信イベントはデッキ情報がないため、安全側で全デッキの保留扱いにする。
       return item.deckKey == null || String(item.deckKey) === key;
     });
   }
@@ -486,7 +491,6 @@
 
     callServer('getSession', [requestedDeckKey], function (data) {
       if (!currentDeck || currentDeck.key !== requestedDeckKey) return;
-      // 未同期回答がある間は、サーバーの一時的に古い値でローカル表示を上書きしない。
       if (hasPendingForDeck(requestedDeckKey)) {
         if (sessionData) renderHome(sessionData);
         return;
@@ -504,7 +508,6 @@
       return;
     }
 
-    // セッション中に更新したローカル状態を先に描画するので、同期完了を待たずホームへ戻れる。
     if (sessionData && sessionData.deck && sessionData.deck.key === currentDeck.key) {
       renderHome(sessionData);
       if (!hasPendingForDeck(currentDeck.key)) refreshHomeFromServer(false);
@@ -612,12 +615,15 @@
     if (!card) return;
 
     gradeTapLocked = true;
+    var shouldSync = mode === 'normal';
 
-    if (mode === 'normal') enqueueGrade(card, !!correct);
+    if (shouldSync) enqueueGrade(card, !!correct);
 
     index++;
-    if (mode === 'normal' && sessionData) sessionData.queue = queue.slice(index);
+    if (shouldSync && sessionData) sessionData.queue = queue.slice(index);
     renderCard();
+
+    if (shouldSync) scheduleGradeSyncAfterPaint();
 
     setTimeout(function () { gradeTapLocked = false; }, 180);
   }
