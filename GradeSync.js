@@ -31,9 +31,8 @@ function gradeCardQueued(rowNumber, correct, eventId) {
  *
  * - cardId を正として行を特定する
  * - rowHint の id が一致すれば探索を省略する
- * - 同じ行への複数イベントはメモリ上で順番に反映し、最後に1回だけ書き込む
- * - F:J (box〜wrong) は1行につき1回の setValues() で更新する
- * - last_wrong は RangeList でまとめて更新する
+ * - 同じ行への複数イベントはメモリ上で順番に反映する
+ * - F:N (学習履歴列) を1行につき1回の setValues() で書き込む
  */
 function gradeCardsQueued(events) {
   if (!Array.isArray(events) || !events.length) {
@@ -72,7 +71,6 @@ function gradeCardsQueued(events) {
 
         applyGradeToState_(state.values, event.correct, today);
         state.dirty = true;
-        if (!event.correct) state.lastWrongDirty = true;
 
         historySet[event.eventId] = true;
         history.push(event.eventId);
@@ -85,28 +83,23 @@ function gradeCardsQueued(events) {
       }
     });
 
-    var lastWrongRanges = [];
     Object.keys(rowStates).forEach(function (rowKey) {
       var state = rowStates[rowKey];
       if (!state.dirty) return;
 
       var row = Number(rowKey);
-      sheet.getRange(row, COL.box, 1, 5).setValues([[
+      sheet.getRange(row, COL.box, 1, COL.last_wrong - COL.box + 1).setValues([[
         state.values[COL.box - 1],
         state.values[COL.due - 1],
         state.values[COL.last_seen - 1],
         state.values[COL.right - 1],
-        state.values[COL.wrong - 1]
+        state.values[COL.wrong - 1],
+        state.values[COL.added - 1],
+        state.values[COL.flag - 1],
+        state.values[COL.exclude - 1],
+        state.values[COL.last_wrong - 1]
       ]]);
-
-      if (state.lastWrongDirty) {
-        lastWrongRanges.push(columnName_(COL.last_wrong) + row);
-      }
     });
-
-    if (lastWrongRanges.length) {
-      sheet.getRangeList(lastWrongRanges).setValue(today);
-    }
 
     if (history.length > GRADE_EVENT_HISTORY_LIMIT) {
       history = history.slice(history.length - GRADE_EVENT_HISTORY_LIMIT);
@@ -144,8 +137,7 @@ function resolveGradeRowState_(sheet, event, rowStates, getIdIndex) {
     if (!hinted) {
       hinted = {
         values: sheet.getRange(event.rowHint, 1, 1, HEADERS.length).getValues()[0],
-        dirty: false,
-        lastWrongDirty: false
+        dirty: false
       };
       rowStates[event.rowHint] = hinted;
     }
@@ -173,8 +165,7 @@ function resolveGradeRowState_(sheet, event, rowStates, getIdIndex) {
   if (!rowStates[row]) {
     rowStates[row] = {
       values: sheet.getRange(row, 1, 1, HEADERS.length).getValues()[0],
-      dirty: false,
-      lastWrongDirty: false
+      dirty: false
     };
   }
   return rowStates[row];
