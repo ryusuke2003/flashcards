@@ -46,13 +46,13 @@ function gradeCardsQueued(events) {
   try {
     var sheet = getSheet_();
     var history = readGradeEventHistory_();
-    var historySet = {};
+    var historySet = Object.create(null);
     history.forEach(function (id) { historySet[id] = true; });
 
     var completed = [];
     var duplicates = [];
     var failed = [];
-    var rowStates = {};
+    var rowStates = Object.create(null);
     var idIndex = null;
     var today = today_();
 
@@ -173,7 +173,7 @@ function resolveGradeRowState_(sheet, event, rowStates, getIdIndex) {
 
 function buildCardIdIndex_(sheet) {
   var lastRow = sheet.getLastRow();
-  var index = {};
+  var index = Object.create(null);
   if (lastRow < 2) return index;
 
   var ids = sheet.getRange(2, COL.id, lastRow - 1, 1).getDisplayValues();

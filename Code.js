@@ -8,7 +8,7 @@
  * Mac / iPhone から同じ Web アプリを開けば同じ状態を共有できます。
  */
 
-var APP_VERSION = '2.1.0-ja';
+var APP_VERSION = '2.2.0-ja';
 var SHEET_NAME = 'cards';
 var UNTYPED_DECK_LABEL = '未分類';
 
@@ -45,7 +45,6 @@ function onOpen() {
     .addItem('アプリを開く ↗', 'menuOpenApp_')
     .addSeparator()
     .addItem('シートを診断', 'menuCheckSheet_')
-    .addItem('IDを振り直す', 'menuRenumberIds_')
     .addSeparator()
     .addItem('この単語帳について', 'menuAbout_')
     .addToUi();
@@ -84,21 +83,10 @@ function menuCheckSheet_() {
   );
 }
 
-function menuRenumberIds_() {
-  var ui = SpreadsheetApp.getUi();
-  var answer = ui.alert(
-    '🎴 IDを振り直す',
-    'cards シートの id を上から 1, 2, 3… と振り直します。\n\n学習履歴やカード本文は変更しません。実行しますか？',
-    ui.ButtonSet.YES_NO
-  );
-  if (answer !== ui.Button.YES) return;
-  ui.alert('🎴 IDを振り直す', renumberIds(), ui.ButtonSet.OK);
-}
-
 function menuAbout_() {
   SpreadsheetApp.getUi().alert(
     '🎴 単語帳',
-    '日本語向け Flashcards v' + APP_VERSION + '\n\n`type` 列をデッキ名として使い、カードと学習履歴はこの Google スプレッドシートだけに保存します。',
+    '日本語向け Flashcards v' + APP_VERSION + '\n\n`type` 列をデッキ名として使い、`id` 列はカードの固定識別子として扱います。カードと学習履歴はこの Google スプレッドシートだけに保存します。',
     SpreadsheetApp.getUi().ButtonSet.OK
   );
 }
@@ -114,7 +102,7 @@ function menuAbout_() {
 function getDecks() {
   var cards = readCards_(getSheet_()).filter(isActiveCard_);
   var today = today_();
-  var grouped = {};
+  var grouped = Object.create(null);
 
   cards.forEach(function (card) {
     var key = deckKey_(card.type);
@@ -282,72 +270,124 @@ function gradeCard(rowNumber, correct, practice) {
   }
 }
 
+/**
+ * 現行クライアント用。cardId を正として対象行を特定し、rowHint は一致した場合だけ高速化に使う。
+ */
+function updateCardById(cardId, rowHint, patch) {
+  var id = normalizeCardLookupId_(cardId);
+  patch = patch || {};
+
+  var lock = LockService.getScriptLock();
+  lock.waitLock(15000);
+  try {
+    var sheet = getSheet_();
+    var row = resolveCardRowById_(sheet, id, rowHint);
+    applyCardPatch_(sheet, row, patch);
+    return { ok: true, row: row, cardId: id };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/**
+ * 旧デプロイ済みクライアントとの互換用。新しいクライアントは updateCardById() を使う。
+ */
 function updateCard(rowNumber, patch) {
   var row = validateRow_(rowNumber);
   patch = patch || {};
-  var allowed = ['front_side', 'back_side', 'notes', 'flag', 'exclude'];
 
   var lock = LockService.getScriptLock();
   lock.waitLock(15000);
   try {
     var sheet = getSheet_();
     if (row > sheet.getLastRow()) throw new Error('カードの行が見つかりません。アプリを再読み込みしてください。');
-
-    allowed.forEach(function (key) {
-      if (!Object.prototype.hasOwnProperty.call(patch, key)) return;
-      var value = patch[key] == null ? '' : String(patch[key]);
-      var range = sheet.getRange(row, COL[key]);
-      setPlainTextValue_(range, value);
-    });
-
-    return { ok: true };
+    applyCardPatch_(sheet, row, patch);
+    return { ok: true, row: row };
   } finally {
     lock.releaseLock();
   }
+}
+
+function applyCardPatch_(sheet, row, patch) {
+  var allowed = ['front_side', 'back_side', 'notes', 'flag', 'exclude'];
+
+  allowed.forEach(function (key) {
+    if (!Object.prototype.hasOwnProperty.call(patch, key)) return;
+    var value = patch[key] == null ? '' : String(patch[key]);
+    var range = sheet.getRange(row, COL[key]);
+    setPlainTextValue_(range, value);
+  });
 }
 
 function checkSheetHealth() {
   var sheet = getSheet_();
   var width = Math.min(sheet.getMaxColumns(), HEADERS.length);
   var got = sheet.getRange(1, 1, 1, width).getValues()[0];
-  var problems = [];
+  var headerProblems = [];
 
   for (var i = 0; i < HEADERS.length; i++) {
     var actual = i < got.length ? String(got[i] || '').trim() : '';
     if (actual !== HEADERS[i]) {
-      problems.push('列 ' + columnName_(i + 1) + ': 「' + (actual || '空欄') + '」→ 正しくは「' + HEADERS[i] + '」');
+      headerProblems.push('列 ' + columnName_(i + 1) + ': 「' + (actual || '空欄') + '」→ 正しくは「' + HEADERS[i] + '」');
     }
   }
 
-  if (problems.length) {
-    return '❌ cards シートの列名または順番に問題があります。\n\n' + problems.join('\n');
+  if (headerProblems.length) {
+    return '❌ cards シートの列名または順番に問題があります。\n\n' + headerProblems.join('\n');
   }
 
-  return '✅ 問題ありません。\n\ncards シートの列名と順番は正しい状態です。';
-}
-
-function renumberIds() {
-  var lock = LockService.getScriptLock();
-  lock.waitLock(15000);
-  try {
-    var sheet = getSheet_();
-    var lastRow = sheet.getLastRow();
-    if (lastRow < 2) return 'カードがありません。';
-
-    var values = sheet.getRange(2, 1, lastRow - 1, HEADERS.length).getValues();
-    var ids = [];
-    var next = 0;
-
-    values.forEach(function (row) {
-      var blank = row.every(function (cell) { return cell === '' || cell === null; });
-      ids.push([blank ? '' : ++next]);
-    });
-
-    sheet.getRange(2, COL.id, ids.length, 1).setValues(ids);
-    return next + ' 件のカードを 1〜' + next + ' に振り直しました。';
-  } finally {
-    lock.releaseLock();
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) {
+    return '✅ 列構成は正しいです。\n\nまだカードはありません。';
   }
+
+  var rows = sheet.getRange(2, 1, lastRow - 1, HEADERS.length).getValues();
+  var seenIds = Object.create(null);
+  var problems = [];
+  var totalProblems = 0;
+  var maxShown = 30;
+
+  function addProblem_(message) {
+    totalProblems++;
+    if (problems.length < maxShown) problems.push(message);
+  }
+
+  rows.forEach(function (row, offset) {
+    if (!rowHasAnyData_(row)) return;
+
+    var rowNumber = offset + 2;
+    var id = cardIdText_(row[COL.id - 1]);
+    var front = String(row[COL.front_side - 1] == null ? '' : row[COL.front_side - 1]).trim();
+    var back = String(row[COL.back_side - 1] == null ? '' : row[COL.back_side - 1]).trim();
+    var boxValue = row[COL.box - 1];
+
+    if (!id) {
+      addProblem_('行 ' + rowNumber + ': id が空欄です。アプリ起動時に固定IDを自動付与します。');
+    } else if (Object.prototype.hasOwnProperty.call(seenIds, id)) {
+      addProblem_('行 ' + rowNumber + ': id「' + id + '」が行 ' + seenIds[id] + ' と重複しています。');
+    } else {
+      seenIds[id] = rowNumber;
+    }
+
+    if (!front) addProblem_('行 ' + rowNumber + ': front_side が空欄です。');
+    if (!back) addProblem_('行 ' + rowNumber + ': back_side が空欄です。');
+
+    if (boxValue !== '' && boxValue !== null) {
+      var box = Number(boxValue);
+      if (!isFinite(box) || Math.floor(box) !== box || box < 1 || box > MAX_BOX) {
+        addProblem_('行 ' + rowNumber + ': box は 1〜' + MAX_BOX + ' の整数か空欄にしてください。');
+      }
+    }
+  });
+
+  if (totalProblems) {
+    if (totalProblems > problems.length) {
+      problems.push('ほか ' + (totalProblems - problems.length) + ' 件の問題があります。');
+    }
+    return '❌ cards シートに ' + totalProblems + ' 件の問題があります。\n\n' + problems.join('\n');
+  }
+
+  return '✅ 問題ありません。\n\n列構成、カードIDの一意性、問題・答え、box 値を確認しました。id は固定識別子としてそのまま維持されます。';
 }
 
 // -----------------------------------------------------------------------------
@@ -398,6 +438,8 @@ function readCards_(sheet) {
   if (lastRow < 2) return [];
 
   var rows = sheet.getRange(2, 1, lastRow - 1, HEADERS.length).getValues();
+  ensureStableCardIdsInRows_(sheet, rows);
+
   var cards = [];
 
   for (var r = 0; r < rows.length; r++) {
@@ -416,6 +458,104 @@ function readCards_(sheet) {
   }
 
   return cards;
+}
+
+function ensureStableCardIdsInRows_(sheet, rows) {
+  var seen = Object.create(null);
+  var missingOffsets = [];
+
+  for (var r = 0; r < rows.length; r++) {
+    var row = rows[r];
+    if (!rowHasAnyData_(row)) continue;
+
+    var id = cardIdText_(row[COL.id - 1]);
+    if (!id) {
+      missingOffsets.push(r);
+      continue;
+    }
+
+    if (Object.prototype.hasOwnProperty.call(seen, id)) {
+      throw new Error('カードID「' + id + '」が行 ' + seen[id] + ' と行 ' + (r + 2) + ' で重複しています。シート診断で確認してください。');
+    }
+    seen[id] = r + 2;
+  }
+
+  if (!missingOffsets.length) return;
+
+  var lock = LockService.getScriptLock();
+  lock.waitLock(15000);
+  try {
+    missingOffsets.forEach(function (offset) {
+      var rowNumber = offset + 2;
+      var currentId = cardIdText_(sheet.getRange(rowNumber, COL.id).getDisplayValue());
+
+      if (currentId) {
+        if (Object.prototype.hasOwnProperty.call(seen, currentId)) {
+          throw new Error('カードID「' + currentId + '」が重複しています。シート診断で確認してください。');
+        }
+        rows[offset][COL.id - 1] = currentId;
+        seen[currentId] = rowNumber;
+        return;
+      }
+
+      var generated = makeStableCardId_(seen);
+      setPlainTextValue_(sheet.getRange(rowNumber, COL.id), generated);
+      rows[offset][COL.id - 1] = generated;
+      seen[generated] = rowNumber;
+    });
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function makeStableCardId_(seen) {
+  var id;
+  do {
+    id = 'card-' + Utilities.getUuid();
+  } while (Object.prototype.hasOwnProperty.call(seen, id));
+  return id;
+}
+
+function resolveCardRowById_(sheet, cardId, rowHint) {
+  var id = normalizeCardLookupId_(cardId);
+  var lastRow = sheet.getLastRow();
+  var hint = Number(rowHint);
+
+  if (isFinite(hint) && Math.floor(hint) === hint && hint >= 2 && hint <= lastRow) {
+    var hintedId = cardIdText_(sheet.getRange(hint, COL.id).getDisplayValue());
+    if (hintedId === id) return hint;
+  }
+
+  if (lastRow < 2) throw new Error('カードが見つかりません。');
+
+  var ids = sheet.getRange(2, COL.id, lastRow - 1, 1).getDisplayValues();
+  var foundRow = 0;
+
+  for (var i = 0; i < ids.length; i++) {
+    if (cardIdText_(ids[i][0]) !== id) continue;
+    if (foundRow) {
+      throw new Error('カードID「' + id + '」が重複しています。シート診断で確認してください。');
+    }
+    foundRow = i + 2;
+  }
+
+  if (!foundRow) throw new Error('カードID「' + id + '」が見つかりません。アプリを再読み込みしてください。');
+  return foundRow;
+}
+
+function normalizeCardLookupId_(value) {
+  var id = cardIdText_(value);
+  if (!id) throw new Error('カードIDがありません。アプリを再読み込みしてください。');
+  if (id.length > 200) throw new Error('カードIDが長すぎます。');
+  return id;
+}
+
+function cardIdText_(value) {
+  return value == null ? '' : String(value).trim();
+}
+
+function rowHasAnyData_(row) {
+  return row.some(function (value) { return value !== '' && value !== null; });
 }
 
 function serializeCell_(key, value) {
