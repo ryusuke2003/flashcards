@@ -1,11 +1,14 @@
 /**
+ * @OnlyCurrentDoc
+ */
+/**
  * 単語帳 — Google Sheets をデータベースに使う日本語向けフラッシュカード。
  *
  * 1 行 = 1 カード。学習履歴もすべて `cards` シートに保存するため、
  * Mac / iPhone から同じ Web アプリを開けば同じ状態を共有できます。
  */
 
-var APP_VERSION = '2.0.0-ja';
+var APP_VERSION = '2.0.1-ja';
 var SHEET_NAME = 'cards';
 
 var HEADERS = [
@@ -251,10 +254,7 @@ function updateCard(rowNumber, patch) {
       if (!Object.prototype.hasOwnProperty.call(patch, key)) return;
       var value = patch[key] == null ? '' : String(patch[key]);
       var range = sheet.getRange(row, COL[key]);
-      // `=`, `+`, `-`, `@` で始まる内容が数式として解釈されないよう、
-      // 編集可能なテキスト列は明示的にプレーンテキスト形式へ固定します。
-      range.setNumberFormat('@');
-      range.setValue(value);
+      setPlainTextValue_(range, value);
     });
 
     return { ok: true };
@@ -382,6 +382,26 @@ function serializeCell_(key, value) {
     return Number(value) || 0;
   }
   return value == null ? '' : String(value);
+}
+
+/**
+ * ユーザー編集テキストを「数式として解釈されない値」として保存します。
+ * Range#setValue/setValues は先頭が `=` の文字列を数式として扱うため、
+ * RichTextValue を使って必ず文字列として書き込みます。
+ */
+function setPlainTextValue_(range, value) {
+  var text = value == null ? '' : String(value);
+  range.setNumberFormat('@');
+
+  if (!text) {
+    range.clearContent();
+    return;
+  }
+
+  var richText = SpreadsheetApp.newRichTextValue()
+    .setText(text)
+    .build();
+  range.setRichTextValue(richText);
 }
 
 // -----------------------------------------------------------------------------
