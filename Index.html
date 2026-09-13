@@ -632,8 +632,9 @@
     var card = currentCard();
     var next = card.flag === '⚑' ? '' : '⚑';
     busy = true;
-    callServer('updateCard', [card._row, { flag: next }], function () {
+    callServer('updateCardById', [card.id, card._row, { flag: next }], function (result) {
       busy = false;
+      if (result && result.row) card._row = result.row;
       card.flag = next;
       $('flag-btn').classList.toggle('on', next === '⚑');
       showToast(next ? '要確認に追加しました。' : '要確認を解除しました。');
@@ -663,8 +664,9 @@
       return;
     }
     busy = true;
-    callServer('updateCard', [card._row, patch], function () {
+    callServer('updateCardById', [card.id, card._row, patch], function (result) {
       busy = false;
+      if (result && result.row) card._row = result.row;
       card.front_side = patch.front_side;
       card.back_side = patch.back_side;
       card.notes = patch.notes;
