@@ -8,8 +8,9 @@
  * Mac / iPhone から同じ Web アプリを開けば同じ状態を共有できます。
  */
 
-var APP_VERSION = '2.0.1-ja';
+var APP_VERSION = '2.1.0-ja';
 var SHEET_NAME = 'cards';
+var UNTYPED_DECK_LABEL = '未分類';
 
 var HEADERS = [
   'id', 'type', 'front_side', 'back_side', 'notes',
@@ -97,7 +98,7 @@ function menuRenumberIds_() {
 function menuAbout_() {
   SpreadsheetApp.getUi().alert(
     '🎴 単語帳',
-    '日本語向け Flashcards v' + APP_VERSION + '\n\nカードと学習履歴は、この Google スプレッドシートだけに保存されます。',
+    '日本語向け Flashcards v' + APP_VERSION + '\n\n`type` 列をデッキ名として使い、カードと学習履歴はこの Google スプレッドシートだけに保存します。',
     SpreadsheetApp.getUi().ButtonSet.OK
   );
 }
@@ -106,20 +107,56 @@ function menuAbout_() {
 // 公開 API（Index.html から google.script.run で呼び出す）
 // -----------------------------------------------------------------------------
 
-function getSession() {
-  var sheet = getSheet_();
-  var cards = readCards_(sheet);
+/**
+ * `type` 列をデッキ名として集計し、最初のデッキ選択画面に返します。
+ * type が空のカードは「未分類」デッキとしてまとめます。
+ */
+function getDecks() {
+  var cards = readCards_(getSheet_()).filter(isActiveCard_);
   var today = today_();
+  var grouped = {};
 
-  var active = cards.filter(function (card) {
-    return !card.exclude && card.front_side && card.back_side;
+  cards.forEach(function (card) {
+    var key = deckKey_(card.type);
+    if (!Object.prototype.hasOwnProperty.call(grouped, key)) {
+      grouped[key] = {
+        key: key,
+        name: key || UNTYPED_DECK_LABEL,
+        total: 0,
+        due: 0,
+        fresh: 0,
+        mistakesToday: 0,
+        flagged: 0
+      };
+    }
+
+    var deck = grouped[key];
+    deck.total++;
+    if (card.box === '') deck.fresh++;
+    if (card.box !== '' && isDue_(card.due, today)) deck.due++;
+    if (normalizeDate_(card.last_wrong) === today) deck.mistakesToday++;
+    if (card.flag === FLAG_MARK) deck.flagged++;
   });
 
-  var due = active.filter(function (card) {
+  return Object.keys(grouped)
+    .map(function (key) { return grouped[key]; })
+    .sort(function (a, b) {
+      if (!a.key && b.key) return 1;
+      if (a.key && !b.key) return -1;
+      return a.name.localeCompare(b.name, 'ja');
+    });
+}
+
+function getSession(deckType) {
+  var sheet = getSheet_();
+  var cards = filterCardsByDeck_(readCards_(sheet).filter(isActiveCard_), deckType);
+  var today = today_();
+
+  var due = cards.filter(function (card) {
     return card.box !== '' && isDue_(card.due, today);
   });
 
-  var fresh = active.filter(function (card) {
+  var fresh = cards.filter(function (card) {
     return card.box === '';
   });
 
@@ -132,49 +169,55 @@ function getSession() {
   var room = Math.max(0, SESSION_LIMIT - queue.length);
   if (room > 0) queue = queue.concat(fresh.slice(0, Math.min(NEW_PER_SESSION, room)));
 
-  var mistakesToday = active.filter(function (card) {
+  var mistakesToday = cards.filter(function (card) {
     return normalizeDate_(card.last_wrong) === today;
   }).length;
 
   var boxCounts = {};
   for (var box = 1; box <= MAX_BOX; box++) boxCounts[box] = 0;
-  active.forEach(function (card) {
+  cards.forEach(function (card) {
     var n = Number(card.box);
     if (n >= 1 && n <= MAX_BOX) boxCounts[n]++;
   });
 
+  var normalizedDeck = deckType == null ? null : deckKey_(deckType);
   return {
     appVersion: APP_VERSION,
     today: today,
+    deck: normalizedDeck == null ? null : {
+      key: normalizedDeck,
+      name: normalizedDeck || UNTYPED_DECK_LABEL
+    },
     queue: queue,
     counts: {
-      total: active.length,
+      total: cards.length,
       due: due.length,
       fresh: fresh.length,
       mistakesToday: mistakesToday,
-      flagged: active.filter(function (card) { return card.flag === FLAG_MARK; }).length,
+      flagged: cards.filter(function (card) { return card.flag === FLAG_MARK; }).length,
       box: boxCounts
     },
     sheetUrl: SpreadsheetApp.getActiveSpreadsheet().getUrl()
   };
 }
 
-function getTodaysMistakes(limit) {
+function getTodaysMistakes(limit, deckType) {
   var max = clampLimit_(limit, ERROR_DRILL_LIMIT);
   var today = today_();
-  var cards = readCards_(getSheet_()).filter(function (card) {
-    return !card.exclude && card.front_side && card.back_side &&
-      normalizeDate_(card.last_wrong) === today;
-  });
+  var cards = filterCardsByDeck_(readCards_(getSheet_()).filter(isActiveCard_), deckType)
+    .filter(function (card) {
+      return normalizeDate_(card.last_wrong) === today;
+    });
   shuffle_(cards);
   return cards.slice(0, max);
 }
 
-function getWeakCards(limit) {
+function getWeakCards(limit, deckType) {
   var max = clampLimit_(limit, PRACTICE_LIMIT);
-  var cards = readCards_(getSheet_()).filter(function (card) {
-    return !card.exclude && card.front_side && card.back_side && card.box !== '';
-  });
+  var cards = filterCardsByDeck_(readCards_(getSheet_()).filter(isActiveCard_), deckType)
+    .filter(function (card) {
+      return card.box !== '';
+    });
 
   cards.forEach(function (card) {
     var right = Number(card.right) || 0;
@@ -402,6 +445,26 @@ function setPlainTextValue_(range, value) {
     .setText(text)
     .build();
   range.setRichTextValue(richText);
+}
+
+function isActiveCard_(card) {
+  return !card.exclude && !!card.front_side && !!card.back_side;
+}
+
+function deckKey_(value) {
+  return value == null ? '' : String(value).trim();
+}
+
+/**
+ * deckType が null / undefined のときだけ全件を返します。
+ * 空文字列は「type が空の未分類デッキ」を意味するため、全件扱いにはしません。
+ */
+function filterCardsByDeck_(cards, deckType) {
+  if (deckType === null || typeof deckType === 'undefined') return cards.slice();
+  var key = deckKey_(deckType);
+  return cards.filter(function (card) {
+    return deckKey_(card.type) === key;
+  });
 }
 
 // -----------------------------------------------------------------------------

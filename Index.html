@@ -25,15 +25,27 @@
     header{text-align:center;padding:10px 0 18px}
     header h1{font-size:22px;margin:0}
     header p{font-size:13px;color:var(--muted);margin:5px 0 0}
+    .screen-title{font-size:18px;font-weight:800;margin:2px 0 12px}
+    .screen-note{font-size:13px;color:var(--muted);line-height:1.6;margin:-4px 0 16px}
+    .deck-list{display:flex;flex-direction:column;gap:10px}
+    .deck-button{width:100%;background:var(--card);color:var(--text);border:1px solid var(--border);padding:17px 18px;text-align:left;border-radius:var(--radius)}
+    .deck-button:active{transform:scale(.99)}
+    .deck-top{display:flex;align-items:center;justify-content:space-between;gap:12px}
+    .deck-name{font-size:18px;font-weight:800;overflow-wrap:anywhere}
+    .deck-count{font-size:13px;color:var(--accent);white-space:nowrap}
+    .deck-meta{font-size:12px;color:var(--muted);font-weight:500;line-height:1.55;margin-top:7px}
     .grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-bottom:14px}
     .stat{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:16px;text-align:center}
     .stat .n{font-size:30px;font-weight:800}.stat .l{font-size:12px;color:var(--muted);margin-top:4px}
     .actions{display:flex;flex-direction:column;gap:10px}
     .primary{background:var(--accent);color:#fff;padding:17px;font-size:17px}
     .secondary{background:var(--card2);color:var(--text);padding:15px;font-size:15px;border:1px solid var(--border)}
+    .secondary.compact{padding:9px 12px;font-size:13px}
     .danger{background:rgba(229,83,60,.15);color:var(--red);border:1px solid rgba(229,83,60,.35)}
     .success{background:rgba(47,191,113,.15);color:var(--green);border:1px solid rgba(47,191,113,.35)}
     .muted{color:var(--muted)}
+    .home-head{display:flex;align-items:center;gap:10px;margin-bottom:12px}
+    .home-deck{flex:1;min-width:0;font-size:18px;font-weight:800;text-align:right;overflow-wrap:anywhere}
     .home-note{font-size:12px;color:var(--muted);line-height:1.6;text-align:center;margin-top:15px}
     .link{display:block;text-align:center;color:var(--accent);text-decoration:none;font-size:14px;margin-top:14px}
     .session-top{display:flex;align-items:center;gap:8px;margin-bottom:12px}
@@ -73,7 +85,18 @@
 
     <main id="loading"><div class="spinner"></div></main>
 
+    <main id="decks" class="hidden">
+      <div class="screen-title">デッキを選択</div>
+      <div class="screen-note">Google Sheets の <code>type</code> 列ごとにデッキを分けています。</div>
+      <div id="deck-list" class="deck-list"></div>
+      <div id="deck-empty" class="empty hidden">カードがありません。<br>Google Sheets の <code>cards</code> シートへCSVを取り込んでください。</div>
+    </main>
+
     <main id="home" class="hidden">
+      <div class="home-head">
+        <button class="secondary compact" id="decks-btn">← デッキ一覧</button>
+        <div class="home-deck" id="selected-deck-name"></div>
+      </div>
       <div class="grid">
         <div class="stat"><div class="n" id="due-count">0</div><div class="l">今日の復習</div></div>
         <div class="stat"><div class="n" id="new-count">0</div><div class="l">未学習</div></div>
@@ -91,7 +114,7 @@
 
     <main id="empty" class="hidden">
       <div class="empty" id="empty-message">カードがありません。</div>
-      <button class="secondary" style="margin-top:12px" onclick="showHome()">ホームに戻る</button>
+      <button class="secondary" style="margin-top:12px" onclick="showHome()">デッキに戻る</button>
     </main>
 
     <main id="session" class="hidden">
@@ -139,6 +162,7 @@
 (function () {
   'use strict';
 
+  var currentDeck = null;
   var sessionData = null;
   var queue = [];
   var index = 0;
@@ -160,15 +184,77 @@
   }
 
   function setScreen(id) {
-    ['loading', 'home', 'empty', 'session'].forEach(function (name) {
+    ['loading', 'decks', 'home', 'empty', 'session'].forEach(function (name) {
       $(name).classList.toggle('hidden', name !== id);
     });
   }
 
-  function loadHome() {
+  function loadDecks() {
+    currentDeck = null;
+    sessionData = null;
+    queue = [];
+    index = 0;
     setScreen('loading');
-    callServer('getSession', [], function (data) {
+    callServer('getDecks', [], function (decks) {
+      renderDecks(decks || []);
+      setScreen('decks');
+    });
+  }
+
+  function renderDecks(decks) {
+    var list = $('deck-list');
+    list.textContent = '';
+    $('deck-empty').classList.toggle('hidden', decks.length > 0);
+
+    decks.forEach(function (deck) {
+      var button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'deck-button';
+
+      var top = document.createElement('div');
+      top.className = 'deck-top';
+
+      var name = document.createElement('div');
+      name.className = 'deck-name';
+      name.textContent = deck.name || '未分類';
+
+      var count = document.createElement('div');
+      count.className = 'deck-count';
+      count.textContent = (deck.total || 0) + '枚';
+
+      var meta = document.createElement('div');
+      meta.className = 'deck-meta';
+      var parts = [
+        '今日の復習 ' + (deck.due || 0),
+        '未学習 ' + (deck.fresh || 0),
+        '今日の間違い ' + (deck.mistakesToday || 0)
+      ];
+      if (deck.flagged) parts.push('要確認 ' + deck.flagged);
+      meta.textContent = parts.join(' ・ ');
+
+      top.appendChild(name);
+      top.appendChild(count);
+      button.appendChild(top);
+      button.appendChild(meta);
+      button.addEventListener('click', function () {
+        currentDeck = { key: deck.key || '', name: deck.name || '未分類' };
+        loadHome();
+      });
+      list.appendChild(button);
+    });
+  }
+
+  function loadHome() {
+    if (!currentDeck) {
+      loadDecks();
+      return;
+    }
+
+    setScreen('loading');
+    callServer('getSession', [currentDeck.key], function (data) {
       sessionData = data;
+      if (data.deck) currentDeck = data.deck;
+      $('selected-deck-name').textContent = currentDeck.name || '未分類';
       $('due-count').textContent = data.counts.due || 0;
       $('new-count').textContent = data.counts.fresh || 0;
       $('mistake-count').textContent = data.counts.mistakesToday || 0;
@@ -183,17 +269,18 @@
 
   function startNormal() {
     if (!sessionData || !sessionData.queue || !sessionData.queue.length) {
-      showEmpty('今日の学習対象はありません。\n復習日になったカードか未学習カードが追加されると、ここに表示されます。');
+      showEmpty('このデッキに今日の学習対象はありません。\n復習日になったカードか未学習カードが追加されると、ここに表示されます。');
       return;
     }
     startQueue(sessionData.queue, 'normal');
   }
 
   function startMistakes() {
+    if (!currentDeck) return;
     setScreen('loading');
-    callServer('getTodaysMistakes', [50], function (cards) {
+    callServer('getTodaysMistakes', [50, currentDeck.key], function (cards) {
       if (!cards || !cards.length) {
-        showEmpty('今日間違えたカードはありません。');
+        showEmpty('このデッキで今日間違えたカードはありません。');
         return;
       }
       startQueue(cards, 'mistakes');
@@ -201,10 +288,11 @@
   }
 
   function startWeak() {
+    if (!currentDeck) return;
     setScreen('loading');
-    callServer('getWeakCards', [20], function (cards) {
+    callServer('getWeakCards', [20, currentDeck.key], function (cards) {
       if (!cards || !cards.length) {
-        showEmpty('苦手判定できる学習済みカードがまだありません。');
+        showEmpty('このデッキには苦手判定できる学習済みカードがまだありません。');
         return;
       }
       startQueue(cards, 'weak');
@@ -237,7 +325,8 @@
     revealed = false;
     busy = false;
 
-    $('mode-label').textContent = mode === 'mistakes' ? '今日の間違いだけ復習中' : mode === 'weak' ? '苦手カードを重点復習中' : '通常学習';
+    var modeName = mode === 'mistakes' ? '今日の間違いだけ復習中' : mode === 'weak' ? '苦手カードを重点復習中' : '通常学習';
+    $('mode-label').textContent = (currentDeck ? currentDeck.name + ' ・ ' : '') + modeName;
     $('progress-text').textContent = (index + 1) + ' / ' + queue.length;
     $('progress-fill').style.width = ((index / queue.length) * 100) + '%';
 
@@ -332,6 +421,7 @@
     showToast.timer = setTimeout(function () { toast.classList.add('hidden'); }, 2200);
   }
 
+  $('decks-btn').addEventListener('click', loadDecks);
   $('start-btn').addEventListener('click', startNormal);
   $('mistakes-btn').addEventListener('click', startMistakes);
   $('weak-btn').addEventListener('click', startWeak);
@@ -347,7 +437,7 @@
     if (event.target === $('edit-overlay')) closeEditor();
   });
 
-  loadHome();
+  loadDecks();
 }());
 </script>
 </body>
