@@ -56,7 +56,6 @@
     .tool.on{color:var(--orange);border-color:rgba(245,158,11,.45)}
     .mode{font-size:12px;text-align:center;color:var(--muted);margin:0 0 10px}
     .card{flex:1;min-height:360px;background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:24px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;gap:16px}
-    .badge{font-size:11px;color:var(--muted);border:1px solid var(--border);border-radius:99px;padding:4px 10px}
     .front{font-size:30px;font-weight:800;line-height:1.35;white-space:pre-wrap;word-break:break-word}
     .divider{width:44px;height:2px;background:var(--border)}
     .back{font-size:21px;line-height:1.5;white-space:pre-wrap;word-break:break-word}
@@ -127,7 +126,6 @@
       </div>
       <div class="mode" id="mode-label"></div>
       <div class="card" id="card-area">
-        <div class="badge hidden" id="type-badge"></div>
         <div class="front" id="front"></div>
         <div class="divider hidden" id="divider"></div>
         <div class="back hidden" id="back"></div>
@@ -314,6 +312,12 @@
 
   function currentCard() { return queue[index] || null; }
 
+  // CSV内の識別子はデータとして残しつつ、学習画面では先頭の問題番号だけ隠す。
+  // 例: 【A1-0183c】 NTEとは？ -> NTEとは？
+  function displayQuestion(text) {
+    return String(text || '').replace(/^\s*(?:【[A-Za-z0-9_-]+】|\[[A-Za-z0-9_-]+\])\s*/, '');
+  }
+
   function renderCard() {
     if (index >= queue.length) {
       showToast('復習が終わりました。');
@@ -330,11 +334,9 @@
     $('progress-text').textContent = (index + 1) + ' / ' + queue.length;
     $('progress-fill').style.width = ((index / queue.length) * 100) + '%';
 
-    $('front').textContent = card.front_side || '';
+    $('front').textContent = displayQuestion(card.front_side);
     $('back').textContent = card.back_side || '';
     $('notes').textContent = card.notes || '';
-    $('type-badge').textContent = card.type || '';
-    $('type-badge').classList.toggle('hidden', !card.type);
 
     $('divider').classList.add('hidden');
     $('back').classList.add('hidden');
