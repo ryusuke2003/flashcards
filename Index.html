@@ -275,7 +275,7 @@
           processGradeQueue();
         }, delay);
       })
-      .gradeCard(item.row, item.correct, false, item.eventId);
+      .gradeCardQueued(item.row, item.correct, item.eventId);
   }
 
   function updateSyncStatus() {
