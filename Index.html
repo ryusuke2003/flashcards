@@ -107,6 +107,7 @@
       </div>
       <div class="actions">
         <button class="primary" id="start-btn">学習を始める</button>
+        <button class="secondary hidden" id="due-btn">今日復習するべき問題</button>
         <button class="secondary hidden" id="mistakes-btn">今日間違えた問題だけ復習</button>
         <button class="secondary" id="weak-btn">苦手な問題を重点復習</button>
       </div>
@@ -246,7 +247,6 @@
     if (!match) return text;
     return match[1] + '-' + ('0' + match[2]).slice(-2) + '-' + ('0' + match[3]).slice(-2);
   }
-
   function enqueueGrade(card, correct) {
     var wasFresh = card.box === '' || card.box == null;
     var wasDue = !wasFresh;
@@ -479,6 +479,7 @@
     $('new-count').textContent = data.counts.fresh || 0;
     $('mistake-count').textContent = data.counts.mistakesToday || 0;
     $('flag-count').textContent = data.counts.flagged || 0;
+    $('due-btn').classList.toggle('hidden', !(data.counts.due > 0));
     $('mistakes-btn').classList.toggle('hidden', !(data.counts.mistakesToday > 0));
     $('sheet-link').href = data.sheetUrl || '#';
     setScreen('home');
@@ -525,6 +526,18 @@
       return;
     }
     startQueue(sessionData.queue, 'normal');
+  }
+
+  function startDue() {
+    if (!sessionData || !sessionData.queue) return;
+    var cards = sessionData.queue.filter(function (card) {
+      return card.box !== '' && card.box != null;
+    });
+    if (!cards.length) {
+      showEmpty('このデッキに今日復習するべき問題はありません。');
+      return;
+    }
+    startQueue(cards, 'due');
   }
 
   function startMistakes() {
@@ -582,7 +595,7 @@
     revealed = false;
     busy = false;
 
-    var modeName = mode === 'mistakes' ? '今日の間違いだけ復習中' : mode === 'weak' ? '苦手カードを重点復習中' : '通常学習';
+    var modeName = mode === 'mistakes' ? '今日の間違いだけ復習中' : mode === 'weak' ? '苦手カードを重点復習中' : mode === 'due' ? '今日復習するべき問題を復習中' : '通常学習';
     $('mode-label').textContent = (currentDeck ? currentDeck.name + ' ・ ' : '') + modeName;
     $('progress-text').textContent = (index + 1) + ' / ' + queue.length;
     $('progress-fill').style.width = ((index / queue.length) * 100) + '%';
@@ -615,12 +628,12 @@
     if (!card) return;
 
     gradeTapLocked = true;
-    var shouldSync = mode === 'normal';
+    var shouldSync = mode === 'normal' || mode === 'due';
 
     if (shouldSync) enqueueGrade(card, !!correct);
 
     index++;
-    if (shouldSync && sessionData) sessionData.queue = queue.slice(index);
+    if (mode === 'normal' && sessionData) sessionData.queue = queue.slice(index);
     renderCard();
 
     if (shouldSync) scheduleGradeSyncAfterPaint();
@@ -692,6 +705,7 @@
 
   $('decks-btn').addEventListener('click', loadDecks);
   $('start-btn').addEventListener('click', startNormal);
+  $('due-btn').addEventListener('click', startDue);
   $('mistakes-btn').addEventListener('click', startMistakes);
   $('weak-btn').addEventListener('click', startWeak);
   $('reveal-btn').addEventListener('click', reveal);
