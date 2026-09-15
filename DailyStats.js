@@ -3,8 +3,9 @@
  *
  * 1回の「正解 / 間違えた」操作を1問として数える。
  * 通常学習だけでなく、今日の間違い復習・苦手重点復習も対象。
+ * 1日 = 1プロパティに分け、PropertiesService の1値サイズ上限にも余裕を持たせる。
  */
-var DAILY_STUDY_STATS_KEY = 'daily_study_stats_v1';
+var DAILY_STUDY_STATS_PREFIX = 'daily_study_stats_v1:';
 var DAILY_STUDY_STATS_RETENTION_DAYS = 90;
 
 /**
@@ -19,9 +20,9 @@ function getTodayStudyCount(deckType) {
   lock.waitLock(15000);
 
   try {
-    var stats = readDailyStudyStats_();
+    var stats = readDailyStudyStats_(today);
     var result = ensureDailyStudyCount_(stats, getSheet_(), today, deckKey);
-    if (result.initialized) writeDailyStudyStats_(stats);
+    if (result.initialized) writeDailyStudyStats_(today, stats, true);
 
     return {
       date: today,
@@ -39,24 +40,20 @@ function getTodayStudyCount(deckType) {
  */
 function incrementDailyStudyCount_(stats, sheet, date, deckType) {
   var deckKey = deckKey_(deckType);
-  var result = ensureDailyStudyCount_(stats, sheet, date, deckKey);
-  var day = stats[date];
+  ensureDailyStudyCount_(stats, sheet, date, deckKey);
   var key = dailyStudyDeckProperty_(deckKey);
-  day[key] = Math.max(0, Number(day[key]) || 0) + 1;
-  return day[key];
+  stats[key] = Math.max(0, Number(stats[key]) || 0) + 1;
+  return stats[key];
 }
 
 function ensureDailyStudyCount_(stats, sheet, date, deckKey) {
-  if (!stats[date] || typeof stats[date] !== 'object') stats[date] = {};
-
-  var day = stats[date];
   var key = dailyStudyDeckProperty_(deckKey);
-  if (Object.prototype.hasOwnProperty.call(day, key)) {
-    return { count: Math.max(0, Number(day[key]) || 0), initialized: false };
+  if (Object.prototype.hasOwnProperty.call(stats, key)) {
+    return { count: Math.max(0, Number(stats[key]) || 0), initialized: false };
   }
 
   var baseline = countCardsSeenTodayInDeck_(sheet, deckKey, date);
-  day[key] = baseline;
+  stats[key] = baseline;
   return { count: baseline, initialized: true };
 }
 
@@ -80,8 +77,9 @@ function countCardsSeenTodayInDeck_(sheet, deckKey, date) {
   return count;
 }
 
-function readDailyStudyStats_() {
-  var raw = PropertiesService.getDocumentProperties().getProperty(DAILY_STUDY_STATS_KEY);
+function readDailyStudyStats_(date) {
+  var raw = PropertiesService.getDocumentProperties()
+    .getProperty(dailyStudyDateProperty_(date));
   if (!raw) return {};
 
   try {
@@ -92,16 +90,28 @@ function readDailyStudyStats_() {
   }
 }
 
-function writeDailyStudyStats_(stats) {
-  var dates = Object.keys(stats).sort();
-  if (dates.length > DAILY_STUDY_STATS_RETENTION_DAYS) {
-    dates.slice(0, dates.length - DAILY_STUDY_STATS_RETENTION_DAYS).forEach(function (date) {
-      delete stats[date];
-    });
-  }
+function writeDailyStudyStats_(date, stats, shouldPrune) {
+  var properties = PropertiesService.getDocumentProperties();
+  properties.setProperty(dailyStudyDateProperty_(date), JSON.stringify(stats));
+  if (shouldPrune) pruneDailyStudyStats_(properties);
+}
 
-  PropertiesService.getDocumentProperties()
-    .setProperty(DAILY_STUDY_STATS_KEY, JSON.stringify(stats));
+function pruneDailyStudyStats_(properties) {
+  var all = properties.getProperties();
+  var dates = Object.keys(all)
+    .filter(function (key) { return key.indexOf(DAILY_STUDY_STATS_PREFIX) === 0; })
+    .map(function (key) { return key.slice(DAILY_STUDY_STATS_PREFIX.length); })
+    .filter(function (date) { return /^\d{4}-\d{2}-\d{2}$/.test(date); })
+    .sort();
+
+  if (dates.length <= DAILY_STUDY_STATS_RETENTION_DAYS) return;
+  dates.slice(0, dates.length - DAILY_STUDY_STATS_RETENTION_DAYS).forEach(function (date) {
+    properties.deleteProperty(dailyStudyDateProperty_(date));
+  });
+}
+
+function dailyStudyDateProperty_(date) {
+  return DAILY_STUDY_STATS_PREFIX + String(date || '');
 }
 
 function dailyStudyDeckProperty_(deckKey) {
