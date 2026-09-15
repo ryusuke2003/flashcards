@@ -47,7 +47,9 @@
     .success{background:rgba(47,191,113,.15);color:var(--green);border:1px solid rgba(47,191,113,.35)}
     .muted{color:var(--muted)}
     .home-head{display:flex;align-items:center;gap:10px;margin-bottom:12px}
-    .home-deck{flex:1;min-width:0;font-size:18px;font-weight:800;text-align:right;overflow-wrap:anywhere}
+    .home-deck{flex:1;min-width:0;text-align:right}
+    .home-deck-name{font-size:18px;font-weight:800;overflow-wrap:anywhere}
+    .home-study-today{font-size:12px;color:var(--accent);font-weight:700;margin-top:4px;min-height:16px}
     .home-note{font-size:12px;color:var(--muted);line-height:1.6;text-align:center;margin-top:15px}
     .link{display:block;text-align:center;color:var(--accent);text-decoration:none;font-size:14px;margin-top:14px}
     .session-top{display:flex;align-items:center;gap:8px;margin-bottom:12px}
@@ -101,7 +103,10 @@
     <main id="home" class="hidden">
       <div class="home-head">
         <button class="secondary compact" id="decks-btn">← デッキ一覧</button>
-        <div class="home-deck" id="selected-deck-name"></div>
+        <div class="home-deck">
+          <div class="home-deck-name" id="selected-deck-name"></div>
+          <div class="home-study-today" id="today-study-count">今日の学習 …</div>
+        </div>
       </div>
       <div class="grid">
         <div class="stat"><div class="n" id="due-count">0</div><div class="l">今日の復習</div></div>
@@ -185,6 +190,7 @@
   var gradeTapLocked = false;
   var pendingDelete = null;
   var pendingNormalStartDeckKey = null;
+  var todayStudyCounts = Object.create(null);
   var gradeSync = {
     storageKey: 'flashcards.pendingGrades.v1',
     batchSize: 5,
@@ -225,6 +231,7 @@
             cardId: item.cardId == null ? '' : String(item.cardId),
             rowHint: Number(item.rowHint != null ? item.rowHint : item.row),
             correct: item.correct,
+            practice: !!item.practice,
             deckKey: item.deckKey == null ? null : String(item.deckKey),
             wasFresh: !!item.wasFresh,
             wasDue: !!item.wasDue,
@@ -261,7 +268,39 @@
     return match[1] + '-' + ('0' + match[2]).slice(-2) + '-' + ('0' + match[3]).slice(-2);
   }
 
-  function enqueueGrade(card, correct) {
+  function studyCountKey(deckKey) {
+    return deckKey == null ? '' : String(deckKey);
+  }
+
+  function renderTodayStudyCount(deckKey) {
+    var key = studyCountKey(deckKey);
+    var count = todayStudyCounts[key];
+    $('today-study-count').textContent = count == null ? '今日の学習 …' : '今日の学習 ' + count + '問';
+  }
+
+  function refreshTodayStudyCount(deckKey) {
+    var key = studyCountKey(deckKey);
+    if (hasPendingForDeck(key)) return;
+
+    google.script.run
+      .withSuccessHandler(function (result) {
+        if (!result) return;
+        todayStudyCounts[key] = Math.max(0, Number(result.count) || 0);
+        if (currentDeck && studyCountKey(currentDeck.key) === key) renderTodayStudyCount(key);
+      })
+      .withFailureHandler(function () {
+        // 学習数の表示に失敗しても、学習そのものは止めない。
+      })
+      .getTodayStudyCount(key);
+  }
+
+  function incrementTodayStudyCount(deckKey) {
+    var key = studyCountKey(deckKey);
+    todayStudyCounts[key] = Math.max(0, Number(todayStudyCounts[key]) || 0) + 1;
+    if (currentDeck && studyCountKey(currentDeck.key) === key) renderTodayStudyCount(key);
+  }
+
+  function enqueueGrade(card, correct, practice) {
     var wasFresh = card.box === '' || card.box == null;
     var wasDue = !wasFresh;
     var wasWrongToday = !!(sessionData && normalizeDateText(card.last_wrong) === sessionData.today);
@@ -271,6 +310,7 @@
       cardId: card.id == null ? '' : String(card.id),
       rowHint: Number(card._row),
       correct: !!correct,
+      practice: !!practice,
       deckKey: currentDeck ? currentDeck.key : null,
       wasFresh: wasFresh,
       wasDue: wasDue,
@@ -278,7 +318,8 @@
       attempts: 0
     });
 
-    applyOptimisticGrade(card, !!correct, wasFresh, wasDue, wasWrongToday);
+    if (!practice) applyOptimisticGrade(card, !!correct, wasFresh, wasDue, wasWrongToday);
+    incrementTodayStudyCount(currentDeck ? currentDeck.key : null);
     persistGradeQueue();
     updateSyncStatus();
   }
@@ -328,7 +369,8 @@
         eventId: item.eventId,
         cardId: item.cardId,
         rowHint: item.rowHint,
-        correct: item.correct
+        correct: item.correct,
+        practice: !!item.practice
       };
     });
 
@@ -360,7 +402,7 @@
         updateSyncStatus();
 
         if (result.failed && result.failed.length) {
-          showToast('採点 ' + result.failed.length + '件を同期できませんでした。カードIDを確認してください。');
+          showToast('学習結果 ' + result.failed.length + '件を同期できませんでした。カードIDを確認してください。');
         }
 
         maybeRefreshHomeAfterSync();
@@ -499,6 +541,9 @@
   function renderHome(data) {
     if (!data || !data.counts || !currentDeck) return;
     $('selected-deck-name').textContent = currentDeck.name || '未分類';
+    renderTodayStudyCount(currentDeck.key);
+    if (!hasPendingForDeck(currentDeck.key)) refreshTodayStudyCount(currentDeck.key);
+
     $('due-count').textContent = data.counts.due || 0;
     $('new-count').textContent = data.counts.fresh || 0;
     $('mistake-count').textContent = data.counts.mistakesToday || 0;
@@ -719,15 +764,13 @@
     if (!card) return;
 
     gradeTapLocked = true;
-    var shouldSync = mode === 'normal' || mode === 'due';
-
-    if (shouldSync) enqueueGrade(card, !!correct);
+    var practice = mode === 'mistakes' || mode === 'weak';
+    enqueueGrade(card, !!correct, practice);
 
     index++;
     if (mode === 'normal' && sessionData) sessionData.queue = queue.slice(index);
     renderCard();
-
-    if (shouldSync) scheduleGradeSyncAfterPaint();
+    scheduleGradeSyncAfterPaint();
 
     setTimeout(function () { gradeTapLocked = false; }, 180);
   }
