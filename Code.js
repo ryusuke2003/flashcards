@@ -19,6 +19,7 @@ var HEADERS = [
 
 var BOX_INTERVALS = { 1: 1, 2: 2, 3: 4, 4: 8, 5: 16 };
 var MAX_BOX = 5;
+var SESSION_LIMIT = 50;
 var PRACTICE_LIMIT = 20;
 var ERROR_DRILL_LIMIT = 50;
 var FLAG_MARK = '⚑';
@@ -146,7 +147,7 @@ function getSession(deckType) {
     return card.box === '';
   });
 
-  var queue = due.concat(fresh)
+  var queue = cards
     .map(function (card) {
       return {
         card: card,
@@ -158,6 +159,7 @@ function getSession(deckType) {
       if (a.attempts !== b.attempts) return a.attempts - b.attempts;
       return a.randomOrder - b.randomOrder;
     })
+    .slice(0, SESSION_LIMIT)
     .map(function (item) { return item.card; });
 
   var mistakesToday = cards.filter(function (card) {
