@@ -72,7 +72,11 @@
     .panel label{display:block;font-size:12px;color:var(--muted);margin:12px 0 6px}
     .panel textarea{width:100%;min-height:92px;background:var(--card2);color:var(--text);border:1px solid var(--border);border-radius:12px;padding:10px;resize:vertical}
     .panel .row{display:flex;gap:10px;margin-top:14px}.panel .row button{flex:1;padding:13px}
+    .undo-bar{position:fixed;left:50%;bottom:calc(24px + env(safe-area-inset-bottom));transform:translateX(-50%);width:min(640px,calc(100% - 32px));display:flex;align-items:center;gap:12px;background:#111827;color:#fff;padding:10px 12px;border-radius:14px;font-size:13px;z-index:55;box-shadow:0 8px 30px rgba(0,0,0,.3)}
+    .undo-message{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .undo-bar button{background:transparent;color:#8bb4ff;border:1px solid rgba(139,180,255,.45);padding:8px 11px;white-space:nowrap}
     .toast{position:fixed;left:50%;bottom:calc(24px + env(safe-area-inset-bottom));transform:translateX(-50%);background:#111827;color:#fff;padding:10px 14px;border-radius:12px;font-size:13px;z-index:50;box-shadow:0 8px 30px rgba(0,0,0,.3)}
+    .undo-bar:not(.hidden)+.toast{bottom:calc(82px + env(safe-area-inset-bottom))}
     .spinner{width:26px;height:26px;border:3px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite;margin:30px auto}
     @keyframes spin{to{transform:rotate(360deg)}}
   </style>
@@ -161,6 +165,10 @@
       </div>
     </div>
   </div>
+  <div id="undo-bar" class="undo-bar hidden" role="status" aria-live="polite">
+    <div id="undo-message" class="undo-message">カードを削除しました。</div>
+    <button id="undo-delete" type="button">元に戻す（10）</button>
+  </div>
   <div id="toast" class="toast hidden"></div>
 
 <script>
@@ -175,6 +183,7 @@
   var mode = 'normal';
   var busy = false;
   var gradeTapLocked = false;
+  var pendingDelete = null;
   var gradeSync = {
     storageKey: 'flashcards.pendingGrades.v1',
     batchSize: 5,
@@ -250,6 +259,7 @@
     if (!match) return text;
     return match[1] + '-' + ('0' + match[2]).slice(-2) + '-' + ('0' + match[3]).slice(-2);
   }
+
   function enqueueGrade(card, correct) {
     var wasFresh = card.box === '' || card.box == null;
     var wasDue = !wasFresh;
@@ -408,6 +418,7 @@
 
   function hasPendingForDeck(deckKey) {
     var key = deckKey == null ? '' : String(deckKey);
+    if (pendingDelete && String(pendingDelete.deckKey == null ? '' : pendingDelete.deckKey) === key) return true;
     return gradeSync.queue.some(function (item) {
       return item.deckKey == null || String(item.deckKey) === key;
     });
@@ -668,6 +679,8 @@
     $('edit-front').value = card.front_side || '';
     $('edit-back').value = card.back_side || '';
     $('edit-notes').value = card.notes || '';
+    $('edit-delete').disabled = !!pendingDelete;
+    $('edit-delete').textContent = pendingDelete ? '直前の削除を復元待ち' : 'カードを削除';
     $('edit-overlay').classList.remove('hidden');
   }
 
@@ -698,25 +711,25 @@
     });
   }
 
-  function updateCountsAfterDelete(card) {
-    if (!sessionData || !sessionData.counts) return;
+  function adjustCountsForCard(data, card, delta) {
+    if (!data || !data.counts) return;
 
-    var counts = sessionData.counts;
-    counts.total = Math.max(0, Number(counts.total || 0) - 1);
-    if (card.flag === '⚑') counts.flagged = Math.max(0, Number(counts.flagged || 0) - 1);
+    var counts = data.counts;
+    counts.total = Math.max(0, Number(counts.total || 0) + delta);
+    if (card.flag === '⚑') counts.flagged = Math.max(0, Number(counts.flagged || 0) + delta);
 
     var isFresh = card.box === '' || card.box == null;
     if (isFresh) {
-      counts.fresh = Math.max(0, Number(counts.fresh || 0) - 1);
+      counts.fresh = Math.max(0, Number(counts.fresh || 0) + delta);
     } else {
       var due = normalizeDateText(card.due);
-      if (!due || due <= sessionData.today) {
-        counts.due = Math.max(0, Number(counts.due || 0) - 1);
+      if (!due || due <= data.today) {
+        counts.due = Math.max(0, Number(counts.due || 0) + delta);
       }
     }
 
-    if (normalizeDateText(card.last_wrong) === sessionData.today) {
-      counts.mistakesToday = Math.max(0, Number(counts.mistakesToday || 0) - 1);
+    if (normalizeDateText(card.last_wrong) === data.today) {
+      counts.mistakesToday = Math.max(0, Number(counts.mistakesToday || 0) + delta);
     }
   }
 
@@ -735,39 +748,179 @@
     if (sessionData) adjust(sessionData.queue);
   }
 
+  function clearPendingDeleteTimers(pending) {
+    if (!pending) return;
+    if (pending.timer) clearTimeout(pending.timer);
+    if (pending.ticker) clearInterval(pending.ticker);
+    pending.timer = null;
+    pending.ticker = null;
+  }
+
+  function hideUndoBar() {
+    $('undo-bar').classList.add('hidden');
+    $('undo-delete').disabled = false;
+  }
+
+  function renderUndoBar() {
+    if (!pendingDelete) {
+      hideUndoBar();
+      return;
+    }
+
+    var bar = $('undo-bar');
+    var button = $('undo-delete');
+    bar.classList.remove('hidden');
+
+    if (!pendingDelete.undoOpen) {
+      $('undo-message').textContent = 'カードの削除を確定しています…';
+      button.textContent = '削除中…';
+      button.disabled = true;
+      return;
+    }
+
+    var remaining = Math.max(0, Math.ceil((pendingDelete.expiresAt - Date.now()) / 1000));
+    $('undo-message').textContent = 'カードを削除しました。';
+    button.textContent = '元に戻す（' + remaining + '）';
+    button.disabled = false;
+  }
+
+  function restorePendingDelete(message) {
+    var pending = pendingDelete;
+    if (!pending) return;
+
+    clearPendingDeleteTimers(pending);
+    pendingDelete = null;
+    hideUndoBar();
+
+    if (queue === pending.queueRef && sessionData === pending.sessionDataRef) {
+      var restoreIndex = Math.min(pending.queueIndex, queue.length);
+      if (index > pending.queueIndex) restoreIndex = Math.min(index + 1, queue.length);
+      queue.splice(restoreIndex, 0, pending.card);
+      adjustCountsForCard(sessionData, pending.card, 1);
+
+      if (pending.mode === 'normal') {
+        sessionData.queue = queue.slice(index);
+      } else if (pending.sessionQueueIndex >= 0 && Array.isArray(sessionData.queue)) {
+        var exists = sessionData.queue.some(function (item) {
+          return String(item.id) === String(pending.card.id);
+        });
+        if (!exists) sessionData.queue.splice(Math.min(pending.sessionQueueIndex, sessionData.queue.length), 0, pending.card);
+      }
+
+      if (!$('session').classList.contains('hidden')) {
+        renderCard();
+      } else if (!$('home').classList.contains('hidden')) {
+        renderHome(sessionData);
+      }
+    } else if (currentDeck && String(currentDeck.key || '') === String(pending.deckKey || '') && !$('home').classList.contains('hidden')) {
+      refreshHomeFromServer(false);
+    }
+
+    if (message) showToast(message);
+  }
+
+  function commitPendingDeleteWhenReady() {
+    var pending = pendingDelete;
+    if (!pending || pending.undoOpen || pending.committing) return;
+
+    if (gradeSync.sending || gradeSync.queue.length) {
+      pending.timer = setTimeout(commitPendingDeleteWhenReady, 250);
+      return;
+    }
+
+    pending.committing = true;
+    renderUndoBar();
+    callServer('deleteCardById', [pending.card.id, pending.card._row], function (result) {
+      var deletedRow = result && Number(result.deletedRow);
+      var deletedId = pending.card.id;
+      clearPendingDeleteTimers(pending);
+      pendingDelete = null;
+      hideUndoBar();
+
+      if (isFinite(deletedRow)) adjustRowHintsAfterDelete(deletedRow, deletedId);
+      if (currentDeck && !$('home').classList.contains('hidden')) refreshHomeFromServer(false);
+    }, function () {
+      if (pendingDelete === pending) restorePendingDelete('削除できなかったため、カードを元に戻しました。');
+    });
+  }
+
+  function expirePendingDelete() {
+    if (!pendingDelete || !pendingDelete.undoOpen) return;
+    pendingDelete.undoOpen = false;
+    if (pendingDelete.ticker) clearInterval(pendingDelete.ticker);
+    pendingDelete.ticker = null;
+    renderUndoBar();
+    commitPendingDeleteWhenReady();
+  }
+
+  function undoPendingDelete() {
+    if (!pendingDelete || !pendingDelete.undoOpen) return;
+    restorePendingDelete('カードを元に戻しました。');
+  }
+
   function deleteEditorCard() {
     if (busy) return;
     var card = currentCard();
     if (!card) return;
 
+    if (pendingDelete) {
+      showToast('直前の削除を元に戻すか、削除が確定してから操作してください。');
+      return;
+    }
     if (gradeSync.sending || gradeSync.queue.length) {
       showToast('採点の同期が終わってから削除してください。');
       return;
     }
 
-    var label = displayQuestion(card.front_side) || 'このカード';
-    if (!window.confirm('「' + label + '」を削除しますか？\n\nこの操作は元に戻せません。')) return;
+    var sessionQueueIndex = -1;
+    if (sessionData && Array.isArray(sessionData.queue)) {
+      for (var i = 0; i < sessionData.queue.length; i++) {
+        if (String(sessionData.queue[i].id) === String(card.id)) {
+          sessionQueueIndex = i;
+          break;
+        }
+      }
+    }
 
-    busy = true;
-    callServer('deleteCardById', [card.id, card._row], function (result) {
-      busy = false;
-      closeEditor();
+    var deleteIndex = index;
+    var deleteMode = mode;
+    var queueRef = queue;
+    var sessionRef = sessionData;
+    var deckKey = currentDeck ? currentDeck.key : null;
 
-      var deletedRow = result && Number(result.deletedRow);
-      var deletedId = card.id;
-      queue.splice(index, 1);
+    closeEditor();
+    queue.splice(deleteIndex, 1);
+    adjustCountsForCard(sessionData, card, -1);
 
-      if (sessionData && Array.isArray(sessionData.queue)) {
+    if (sessionData && Array.isArray(sessionData.queue)) {
+      if (mode === 'normal') {
+        sessionData.queue = queue.slice(index);
+      } else {
         sessionData.queue = sessionData.queue.filter(function (item) {
-          return String(item.id) !== String(deletedId);
+          return String(item.id) !== String(card.id);
         });
       }
-      updateCountsAfterDelete(card);
-      if (isFinite(deletedRow)) adjustRowHintsAfterDelete(deletedRow, deletedId);
+    }
 
-      showToast('カードを削除しました。');
-      renderCard();
-    });
+    pendingDelete = {
+      card: card,
+      queueIndex: deleteIndex,
+      sessionQueueIndex: sessionQueueIndex,
+      queueRef: queueRef,
+      sessionDataRef: sessionRef,
+      deckKey: deckKey,
+      mode: deleteMode,
+      expiresAt: Date.now() + 10000,
+      undoOpen: true,
+      committing: false,
+      timer: null,
+      ticker: null
+    };
+
+    pendingDelete.timer = setTimeout(expirePendingDelete, 10000);
+    pendingDelete.ticker = setInterval(renderUndoBar, 250);
+    renderUndoBar();
+    renderCard();
   }
 
   function showToast(message) {
@@ -792,6 +945,7 @@
   $('edit-delete').addEventListener('click', deleteEditorCard);
   $('edit-cancel').addEventListener('click', closeEditor);
   $('edit-save').addEventListener('click', saveEditor);
+  $('undo-delete').addEventListener('click', undoPendingDelete);
   $('edit-overlay').addEventListener('click', function (event) {
     if (event.target === $('edit-overlay')) closeEditor();
   });
