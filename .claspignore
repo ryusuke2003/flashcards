@@ -3,6 +3,7 @@
 !appsscript.json
 !Code.js
 !GradeSync.js
+!CardDelete.js
 !Index.html
 
 # One-off vocab-maintenance scripts (see AGENT.md "Vocab-update workflow").
