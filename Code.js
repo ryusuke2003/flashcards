@@ -19,8 +19,6 @@ var HEADERS = [
 
 var BOX_INTERVALS = { 1: 1, 2: 2, 3: 4, 4: 8, 5: 16 };
 var MAX_BOX = 5;
-var NEW_PER_SESSION = 10;
-var SESSION_LIMIT = 50;
 var PRACTICE_LIMIT = 20;
 var ERROR_DRILL_LIMIT = 50;
 var FLAG_MARK = '⚑';
@@ -148,14 +146,19 @@ function getSession(deckType) {
     return card.box === '';
   });
 
-  due.sort(function (a, b) {
-    return String(a.due || '').localeCompare(String(b.due || ''));
-  });
-  shuffle_(fresh);
-
-  var queue = due.slice(0, SESSION_LIMIT);
-  var room = Math.max(0, SESSION_LIMIT - queue.length);
-  if (room > 0) queue = queue.concat(fresh.slice(0, Math.min(NEW_PER_SESSION, room)));
+  var queue = due.concat(fresh)
+    .map(function (card) {
+      return {
+        card: card,
+        attempts: (Number(card.right) || 0) + (Number(card.wrong) || 0),
+        randomOrder: Math.random()
+      };
+    })
+    .sort(function (a, b) {
+      if (a.attempts !== b.attempts) return a.attempts - b.attempts;
+      return a.randomOrder - b.randomOrder;
+    })
+    .map(function (item) { return item.card; });
 
   var mistakesToday = cards.filter(function (card) {
     return isPendingMistake_(card, today);
