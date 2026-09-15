@@ -657,15 +657,24 @@
   }
 
   function startDue() {
-    if (!sessionData || !sessionData.queue) return;
-    var cards = sessionData.queue.filter(function (card) {
-      return card.box !== '' && card.box != null;
-    });
-    if (!cards.length) {
-      showEmpty('このデッキに今日復習するべき問題はありません。');
+    if (!currentDeck) return;
+    if (pendingDelete) {
+      showToast('削除の復元待ちが終わってから再取得してください。');
       return;
     }
-    startQueue(cards, 'due');
+    if (hasPendingForDeck(currentDeck.key)) {
+      showToast('学習結果の同期が終わってから再取得してください。');
+      processGradeQueue();
+      return;
+    }
+    setScreen('loading');
+    callServer('getDueCards', [currentDeck.key], function (cards) {
+      if (!cards || !cards.length) {
+        showEmpty('このデッキに今日復習するべき問題はありません。');
+        return;
+      }
+      startQueue(cards, 'due');
+    });
   }
 
   function startMistakes() {

@@ -148,14 +148,29 @@ function getSession(deckType) {
     return card.box === '';
   });
 
-  due.sort(function (a, b) {
-    return String(a.due || '').localeCompare(String(b.due || ''));
-  });
-  shuffle_(fresh);
+  var candidates = due.concat(fresh)
+    .map(function (card) {
+      return {
+        card: card,
+        fresh: card.box === '',
+        attempts: (Number(card.right) || 0) + (Number(card.wrong) || 0),
+        randomOrder: Math.random()
+      };
+    })
+    .sort(function (a, b) {
+      if (a.attempts !== b.attempts) return a.attempts - b.attempts;
+      return a.randomOrder - b.randomOrder;
+    });
 
-  var queue = due.slice(0, SESSION_LIMIT);
-  var room = Math.max(0, SESSION_LIMIT - queue.length);
-  if (room > 0) queue = queue.concat(fresh.slice(0, Math.min(NEW_PER_SESSION, room)));
+  var freshCount = 0;
+  var queue = candidates.filter(function (item) {
+    if (!item.fresh) return true;
+    if (freshCount >= NEW_PER_SESSION) return false;
+    freshCount++;
+    return true;
+  })
+    .slice(0, SESSION_LIMIT)
+    .map(function (item) { return item.card; });
 
   var mistakesToday = cards.filter(function (card) {
     return isPendingMistake_(card, today);
@@ -187,6 +202,20 @@ function getSession(deckType) {
     },
     sheetUrl: SpreadsheetApp.getActiveSpreadsheet().getUrl()
   };
+}
+
+function getDueCards(deckType) {
+  var today = today_();
+  var cards = filterCardsByDeck_(readCards_(getSheet_()).filter(isActiveCard_), deckType)
+    .filter(function (card) {
+      return card.box !== '' && isDue_(card.due, today);
+    });
+
+  cards.sort(function (a, b) {
+    return String(a.due || '').localeCompare(String(b.due || ''));
+  });
+
+  return cards.slice(0, SESSION_LIMIT);
 }
 
 function getTodaysMistakes(limit, deckType) {
