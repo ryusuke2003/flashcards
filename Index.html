@@ -153,6 +153,9 @@
       <label for="edit-notes">メモ</label>
       <textarea id="edit-notes"></textarea>
       <div class="row">
+        <button class="danger" id="edit-delete">カードを削除</button>
+      </div>
+      <div class="row">
         <button class="secondary" id="edit-cancel">キャンセル</button>
         <button class="primary" id="edit-save">保存</button>
       </div>
@@ -695,6 +698,78 @@
     });
   }
 
+  function updateCountsAfterDelete(card) {
+    if (!sessionData || !sessionData.counts) return;
+
+    var counts = sessionData.counts;
+    counts.total = Math.max(0, Number(counts.total || 0) - 1);
+    if (card.flag === '⚑') counts.flagged = Math.max(0, Number(counts.flagged || 0) - 1);
+
+    var isFresh = card.box === '' || card.box == null;
+    if (isFresh) {
+      counts.fresh = Math.max(0, Number(counts.fresh || 0) - 1);
+    } else {
+      var due = normalizeDateText(card.due);
+      if (!due || due <= sessionData.today) {
+        counts.due = Math.max(0, Number(counts.due || 0) - 1);
+      }
+    }
+
+    if (normalizeDateText(card.last_wrong) === sessionData.today) {
+      counts.mistakesToday = Math.max(0, Number(counts.mistakesToday || 0) - 1);
+    }
+  }
+
+  function adjustRowHintsAfterDelete(deletedRow, deletedId) {
+    var seen = [];
+    function adjust(cards) {
+      if (!Array.isArray(cards)) return;
+      cards.forEach(function (item) {
+        if (!item || String(item.id) === String(deletedId) || seen.indexOf(item) !== -1) return;
+        seen.push(item);
+        var row = Number(item._row);
+        if (isFinite(row) && row > deletedRow) item._row = row - 1;
+      });
+    }
+    adjust(queue);
+    if (sessionData) adjust(sessionData.queue);
+  }
+
+  function deleteEditorCard() {
+    if (busy) return;
+    var card = currentCard();
+    if (!card) return;
+
+    if (gradeSync.sending || gradeSync.queue.length) {
+      showToast('採点の同期が終わってから削除してください。');
+      return;
+    }
+
+    var label = displayQuestion(card.front_side) || 'このカード';
+    if (!window.confirm('「' + label + '」を削除しますか？\n\nこの操作は元に戻せません。')) return;
+
+    busy = true;
+    callServer('deleteCardById', [card.id, card._row], function (result) {
+      busy = false;
+      closeEditor();
+
+      var deletedRow = result && Number(result.deletedRow);
+      var deletedId = card.id;
+      queue.splice(index, 1);
+
+      if (sessionData && Array.isArray(sessionData.queue)) {
+        sessionData.queue = sessionData.queue.filter(function (item) {
+          return String(item.id) !== String(deletedId);
+        });
+      }
+      updateCountsAfterDelete(card);
+      if (isFinite(deletedRow)) adjustRowHintsAfterDelete(deletedRow, deletedId);
+
+      showToast('カードを削除しました。');
+      renderCard();
+    });
+  }
+
   function showToast(message) {
     var toast = $('toast');
     toast.textContent = message;
@@ -714,6 +789,7 @@
   $('quit-btn').addEventListener('click', quitSession);
   $('flag-btn').addEventListener('click', toggleFlag);
   $('edit-btn').addEventListener('click', openEditor);
+  $('edit-delete').addEventListener('click', deleteEditorCard);
   $('edit-cancel').addEventListener('click', closeEditor);
   $('edit-save').addEventListener('click', saveEditor);
   $('edit-overlay').addEventListener('click', function (event) {
