@@ -35,7 +35,7 @@ function gradeCardQueued(rowNumber, correct, eventId) {
  * - 通常学習は学習履歴を更新する
  * - practice=true はスケジュールを変えず、今日の解答数だけ +1 する
  * - 同じ行への複数イベントはメモリ上で順番に反映する
- * - F:N (学習履歴列) を1行につき1回の setValues() で書き込む
+ * - F:O (学習履歴列) を1行につき1回の setValues() で書き込む
  */
 function gradeCardsQueued(events) {
   if (!Array.isArray(events) || !events.length) {
@@ -74,6 +74,10 @@ function gradeCardsQueued(events) {
           return idIndex;
         });
 
+        if (event.practice || event.correct) {
+          if (markMistakeReviewedInState_(state.values)) state.dirty = true;
+        }
+
         if (!event.practice) {
           applyGradeToState_(state.values, event.correct, today);
           state.dirty = true;
@@ -98,7 +102,7 @@ function gradeCardsQueued(events) {
       if (!state.dirty) return;
 
       var row = Number(rowKey);
-      sheet.getRange(row, COL.box, 1, COL.last_wrong - COL.box + 1).setValues([[
+      sheet.getRange(row, COL.box, 1, COL.last_wrong_reviewed - COL.box + 1).setValues([[
         state.values[COL.box - 1],
         state.values[COL.due - 1],
         state.values[COL.last_seen - 1],
@@ -107,7 +111,8 @@ function gradeCardsQueued(events) {
         state.values[COL.added - 1],
         state.values[COL.flag - 1],
         state.values[COL.exclude - 1],
-        state.values[COL.last_wrong - 1]
+        state.values[COL.last_wrong - 1],
+        state.values[COL.last_wrong_reviewed - 1]
       ]]);
     });
 
@@ -220,7 +225,19 @@ function applyGradeToState_(values, correct, today) {
   } else {
     values[COL.wrong - 1] = wrong + 1;
     values[COL.last_wrong - 1] = today;
+    values[COL.last_wrong_reviewed - 1] = '';
   }
+}
+
+function markMistakeReviewedInState_(values) {
+  var lastWrong = normalizeDate_(values[COL.last_wrong - 1]);
+  if (!lastWrong) return false;
+
+  var reviewed = normalizeDate_(values[COL.last_wrong_reviewed - 1]);
+  if (reviewed && reviewed >= lastWrong) return false;
+
+  values[COL.last_wrong_reviewed - 1] = lastWrong;
+  return true;
 }
 
 function readGradeEventHistory_() {
