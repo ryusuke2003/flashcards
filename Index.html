@@ -431,6 +431,10 @@
   }
 
   function loadDecks() {
+    if (pendingDelete) {
+      showToast('直前の削除を元に戻すか、削除が確定してからデッキを移動してください。');
+      return;
+    }
     currentDeck = null;
     sessionData = null;
     queue = [];
@@ -556,6 +560,10 @@
 
   function startMistakes() {
     if (!currentDeck) return;
+    if (pendingDelete) {
+      showToast('削除の復元待ちが終わってから再取得してください。');
+      return;
+    }
     setScreen('loading');
     callServer('getTodaysMistakes', [50, currentDeck.key], function (cards) {
       if (!cards || !cards.length) {
@@ -568,6 +576,10 @@
 
   function startWeak() {
     if (!currentDeck) return;
+    if (pendingDelete) {
+      showToast('削除の復元待ちが終わってから再取得してください。');
+      return;
+    }
     setScreen('loading');
     callServer('getWeakCards', [20, currentDeck.key], function (cards) {
       if (!cards || !cards.length) {
@@ -759,6 +771,8 @@
   function hideUndoBar() {
     $('undo-bar').classList.add('hidden');
     $('undo-delete').disabled = false;
+    $('edit-delete').disabled = false;
+    $('edit-delete').textContent = 'カードを削除';
   }
 
   function renderUndoBar() {
