@@ -14,7 +14,7 @@ var UNTYPED_DECK_LABEL = '未分類';
 
 var HEADERS = [
   'id', 'type', 'front_side', 'back_side', 'notes',
-  'box', 'due', 'last_seen', 'right', 'wrong', 'added', 'flag', 'exclude', 'last_wrong'
+  'box', 'due', 'last_seen', 'right', 'wrong', 'added', 'flag', 'exclude', 'last_wrong', 'last_wrong_reviewed'
 ];
 
 var BOX_INTERVALS = { 1: 1, 2: 2, 3: 4, 4: 8, 5: 16 };
@@ -122,7 +122,7 @@ function getDecks() {
     deck.total++;
     if (card.box === '') deck.fresh++;
     if (card.box !== '' && isDue_(card.due, today)) deck.due++;
-    if (normalizeDate_(card.last_wrong) === today) deck.mistakesToday++;
+    if (isPendingMistake_(card, today)) deck.mistakesToday++;
     if (card.flag === FLAG_MARK) deck.flagged++;
   });
 
@@ -158,7 +158,7 @@ function getSession(deckType) {
   if (room > 0) queue = queue.concat(fresh.slice(0, Math.min(NEW_PER_SESSION, room)));
 
   var mistakesToday = cards.filter(function (card) {
-    return normalizeDate_(card.last_wrong) === today;
+    return isPendingMistake_(card, today);
   }).length;
 
   var boxCounts = {};
@@ -194,7 +194,7 @@ function getTodaysMistakes(limit, deckType) {
   var today = today_();
   var cards = filterCardsByDeck_(readCards_(getSheet_()).filter(isActiveCard_), deckType)
     .filter(function (card) {
-      return normalizeDate_(card.last_wrong) === today;
+      return isPendingMistake_(card, today);
     });
   shuffle_(cards);
   return cards.slice(0, max);
@@ -233,7 +233,6 @@ function getWeakCards(limit, deckType) {
  */
 function gradeCard(rowNumber, correct, practice) {
   var row = validateRow_(rowNumber);
-  if (practice) return { ok: true, practice: true };
 
   var lock = LockService.getScriptLock();
   lock.waitLock(15000);
@@ -245,6 +244,13 @@ function gradeCard(rowNumber, correct, practice) {
     if (!String(values[COL.front_side - 1] || '').trim()) {
       throw new Error('この行にはカードがありません。アプリを再読み込みしてください。');
     }
+
+    var lastWrong = normalizeDate_(values[COL.last_wrong - 1]);
+    if ((practice || correct) && lastWrong) {
+      sheet.getRange(row, COL.last_wrong_reviewed).setValue(lastWrong);
+      values[COL.last_wrong_reviewed - 1] = lastWrong;
+    }
+    if (practice) return { ok: true, practice: true };
 
     var currentBox = Number(values[COL.box - 1]) || 0;
     var newBox = correct ? Math.min(MAX_BOX, currentBox > 0 ? currentBox + 1 : 2) : 1;
@@ -262,6 +268,7 @@ function gradeCard(rowNumber, correct, practice) {
     } else {
       sheet.getRange(row, COL.wrong).setValue(wrong + 1);
       sheet.getRange(row, COL.last_wrong).setValue(today);
+      sheet.getRange(row, COL.last_wrong_reviewed).clearContent();
     }
 
     return { ok: true, box: newBox, due: due };
@@ -423,6 +430,7 @@ function ensureSchema_(sheet) {
     return;
   }
 
+  var needsMistakeReviewMigration = row[COL.last_wrong_reviewed - 1] === '' || row[COL.last_wrong_reviewed - 1] === null;
   var changed = false;
   for (var i = 0; i < HEADERS.length; i++) {
     if (row[i] === '' || row[i] === null) {
@@ -431,6 +439,21 @@ function ensureSchema_(sheet) {
     }
   }
   if (changed) sheet.getRange(1, 1, 1, HEADERS.length).setValues([row]);
+  if (needsMistakeReviewMigration) migrateLastWrongReviewed_(sheet);
+}
+
+function migrateLastWrongReviewed_(sheet) {
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) return;
+
+  var today = today_();
+  var lastWrongValues = sheet.getRange(2, COL.last_wrong, lastRow - 1, 1).getValues();
+  var reviewedValues = lastWrongValues.map(function (row) {
+    var lastWrong = normalizeDate_(row[0]);
+    return [lastWrong && lastWrong < today ? lastWrong : ''];
+  });
+
+  sheet.getRange(2, COL.last_wrong_reviewed, reviewedValues.length, 1).setValues(reviewedValues);
 }
 
 function readCards_(sheet) {
@@ -634,6 +657,14 @@ function addDays_(iso, days) {
 function isDue_(due, today) {
   var normalized = normalizeDate_(due);
   return !normalized || normalized <= today;
+}
+
+function isPendingMistake_(card, today) {
+  var lastWrong = normalizeDate_(card.last_wrong);
+  if (!lastWrong || lastWrong > today) return false;
+
+  var reviewed = normalizeDate_(card.last_wrong_reviewed);
+  return !reviewed || reviewed < lastWrong;
 }
 
 function shuffle_(array) {
