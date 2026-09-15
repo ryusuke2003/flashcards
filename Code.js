@@ -77,7 +77,7 @@ function menuOpenApp_() {
 
 function menuCheckSheet_() {
   SpreadsheetApp.getUi().alert(
-    '🎴 単語帳',
+    '🎴 シート診断',
     checkSheetHealth(),
     SpreadsheetApp.getUi().ButtonSet.OK
   );
