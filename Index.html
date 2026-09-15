@@ -794,6 +794,12 @@
     });
   }
 
+  function setEditorSaving(saving) {
+    var button = $('edit-save');
+    button.disabled = !!saving;
+    button.textContent = saving ? '保存中…' : '保存';
+  }
+
   function openEditor() {
     var card = currentCard();
     $('edit-front').value = card.front_side || '';
@@ -801,6 +807,7 @@
     $('edit-notes').value = card.notes || '';
     $('edit-delete').disabled = !!pendingDelete;
     $('edit-delete').textContent = pendingDelete ? '直前の削除を復元待ち' : 'カードを削除';
+    setEditorSaving(false);
     $('edit-overlay').classList.remove('hidden');
   }
 
@@ -819,8 +826,10 @@
       return;
     }
     busy = true;
+    setEditorSaving(true);
     callServer('updateCardById', [card.id, card._row, patch], function (result) {
       busy = false;
+      setEditorSaving(false);
       if (result && result.row) card._row = result.row;
       card.front_side = patch.front_side;
       card.back_side = patch.back_side;
@@ -828,6 +837,8 @@
       closeEditor();
       renderCard();
       showToast('保存しました。');
+    }, function () {
+      setEditorSaving(false);
     });
   }
 
