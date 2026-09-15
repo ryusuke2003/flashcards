@@ -58,7 +58,7 @@ function gradeCardsQueued(events) {
     var rowStates = Object.create(null);
     var idIndex = null;
     var today = today_();
-    var studyStats = readDailyStudyStats_();
+    var studyStats = readDailyStudyStats_(today);
     var studyStatsDirty = false;
 
     normalized.forEach(function (event) {
@@ -111,7 +111,7 @@ function gradeCardsQueued(events) {
       ]]);
     });
 
-    if (studyStatsDirty) writeDailyStudyStats_(studyStats);
+    if (studyStatsDirty) writeDailyStudyStats_(today, studyStats, false);
 
     if (history.length > GRADE_EVENT_HISTORY_LIMIT) {
       history = history.slice(history.length - GRADE_EVENT_HISTORY_LIMIT);
