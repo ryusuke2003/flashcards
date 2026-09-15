@@ -184,6 +184,7 @@
   var busy = false;
   var gradeTapLocked = false;
   var pendingDelete = null;
+  var pendingNormalStartDeckKey = null;
   var gradeSync = {
     storageKey: 'flashcards.pendingGrades.v1',
     batchSize: 5,
@@ -425,6 +426,10 @@
   }
 
   function maybeRefreshHomeAfterSync() {
+    if (pendingNormalStartDeckKey !== null) {
+      continuePendingNormalStart();
+      return;
+    }
     if (!currentDeck || $('home').classList.contains('hidden')) return;
     if (hasPendingForDeck(currentDeck.key)) return;
     refreshHomeFromServer(false);
@@ -435,6 +440,7 @@
       showToast('直前の削除を元に戻すか、削除が確定してからデッキを移動してください。');
       return;
     }
+    pendingNormalStartDeckKey = null;
     currentDeck = null;
     sessionData = null;
     queue = [];
@@ -497,6 +503,14 @@
     $('new-count').textContent = data.counts.fresh || 0;
     $('mistake-count').textContent = data.counts.mistakesToday || 0;
     $('flag-count').textContent = data.counts.flagged || 0;
+
+    var hasStudyTargets = Number(data.counts.due || 0) + Number(data.counts.fresh || 0) > 0;
+    var waitingForNextSession = pendingNormalStartDeckKey !== null;
+    $('start-btn').disabled = !hasStudyTargets || waitingForNextSession;
+    $('start-btn').textContent = waitingForNextSession
+      ? '学習結果を同期中…'
+      : (hasStudyTargets ? '学習を始める' : '今日の学習は完了');
+
     $('due-btn').classList.toggle('hidden', !(data.counts.due > 0));
     $('mistakes-btn').classList.toggle('hidden', !(data.counts.mistakesToday > 0));
     $('sheet-link').href = data.sheetUrl || '#';
@@ -539,11 +553,62 @@
   window.showHome = loadHome;
 
   function startNormal() {
-    if (!sessionData || !sessionData.queue || !sessionData.queue.length) {
-      showEmpty('このデッキに今日の学習対象はありません。\n復習日になったカードか未学習カードが追加されると、ここに表示されます。');
+    if (sessionData && sessionData.queue && sessionData.queue.length) {
+      startQueue(sessionData.queue, 'normal');
       return;
     }
-    startQueue(sessionData.queue, 'normal');
+    requestFreshNormalSession();
+  }
+
+  function requestFreshNormalSession() {
+    if (!currentDeck || pendingNormalStartDeckKey !== null) return;
+    if (pendingDelete) {
+      showToast('削除の復元待ちが終わってから次の学習を始めてください。');
+      return;
+    }
+
+    pendingNormalStartDeckKey = currentDeck.key;
+    $('start-btn').disabled = true;
+    $('start-btn').textContent = hasPendingForDeck(currentDeck.key)
+      ? '学習結果を同期中…'
+      : '次の学習を準備中…';
+
+    if (hasPendingForDeck(currentDeck.key)) {
+      processGradeQueue();
+      return;
+    }
+    continuePendingNormalStart();
+  }
+
+  function continuePendingNormalStart() {
+    if (pendingNormalStartDeckKey === null) return;
+    var requestedDeckKey = pendingNormalStartDeckKey;
+
+    if (!currentDeck || currentDeck.key !== requestedDeckKey) {
+      pendingNormalStartDeckKey = null;
+      return;
+    }
+    if (hasPendingForDeck(requestedDeckKey)) return;
+
+    callServer('getSession', [requestedDeckKey], function (data) {
+      if (pendingNormalStartDeckKey !== requestedDeckKey ||
+          !currentDeck || currentDeck.key !== requestedDeckKey) return;
+
+      pendingNormalStartDeckKey = null;
+      sessionData = data;
+      if (data && data.deck) currentDeck = data.deck;
+
+      if (data && data.queue && data.queue.length) {
+        startQueue(data.queue, 'normal');
+        return;
+      }
+      renderHome(data);
+    }, function () {
+      if (pendingNormalStartDeckKey === requestedDeckKey) {
+        pendingNormalStartDeckKey = null;
+        if (sessionData) renderHome(sessionData);
+      }
+    });
   }
 
   function startDue() {
