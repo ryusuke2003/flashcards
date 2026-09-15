@@ -3,7 +3,7 @@
  *
  * クライアントは採点直後に次の問題へ進み、複数件の採点結果をまとめて送る。
  * cardId を正として対象カードを特定し、rowHint は一致した場合だけ高速化に使う。
- * 同じ eventId を再送しても、同じ採点を二重反映しない。
+ * 同じ eventId を再送しても、同じ採点や学習数を二重反映しない。
  */
 
 var GRADE_EVENT_HISTORY_KEY = 'processed_grade_events_v1';
@@ -18,7 +18,8 @@ function gradeCardQueued(rowNumber, correct, eventId) {
     eventId: eventId,
     rowHint: rowNumber,
     cardId: '',
-    correct: !!correct
+    correct: !!correct,
+    practice: false
   }]);
   return {
     ok: !result.failed.length,
@@ -31,6 +32,8 @@ function gradeCardQueued(rowNumber, correct, eventId) {
  *
  * - cardId を正として行を特定する
  * - rowHint の id が一致すれば探索を省略する
+ * - 通常学習は学習履歴を更新する
+ * - practice=true はスケジュールを変えず、今日の解答数だけ +1 する
  * - 同じ行への複数イベントはメモリ上で順番に反映する
  * - F:N (学習履歴列) を1行につき1回の setValues() で書き込む
  */
@@ -55,6 +58,8 @@ function gradeCardsQueued(events) {
     var rowStates = Object.create(null);
     var idIndex = null;
     var today = today_();
+    var studyStats = readDailyStudyStats_(today);
+    var studyStatsDirty = false;
 
     normalized.forEach(function (event) {
       if (historySet[event.eventId]) {
@@ -69,8 +74,13 @@ function gradeCardsQueued(events) {
           return idIndex;
         });
 
-        applyGradeToState_(state.values, event.correct, today);
-        state.dirty = true;
+        if (!event.practice) {
+          applyGradeToState_(state.values, event.correct, today);
+          state.dirty = true;
+        }
+
+        incrementDailyStudyCount_(studyStats, sheet, today, state.values[COL.type - 1]);
+        studyStatsDirty = true;
 
         historySet[event.eventId] = true;
         history.push(event.eventId);
@@ -101,6 +111,8 @@ function gradeCardsQueued(events) {
       ]]);
     });
 
+    if (studyStatsDirty) writeDailyStudyStats_(today, studyStats, false);
+
     if (history.length > GRADE_EVENT_HISTORY_LIMIT) {
       history = history.slice(history.length - GRADE_EVENT_HISTORY_LIMIT);
     }
@@ -124,7 +136,8 @@ function normalizeGradeEvent_(event) {
     eventId: normalizeGradeEventId_(event.eventId),
     cardId: normalizeCardId_(event.cardId),
     rowHint: normalizeRowHint_(event.rowHint != null ? event.rowHint : event.row),
-    correct: !!event.correct
+    correct: !!event.correct,
+    practice: !!event.practice
   };
 }
 
