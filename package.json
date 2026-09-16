@@ -1,0 +1,10 @@
+{
+  "name": "flashcards-gas",
+  "private": true,
+  "scripts": {
+    "test": "node --test tests/*.test.js"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
