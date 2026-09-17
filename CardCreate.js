@@ -2,7 +2,7 @@
  * 既存デッキに新しいカードを追加する。
  *
  * deckType は現在開いている既存デッキの key を受け取り、
- * 新しい type を勝手に作れないようサーバー側でも存在確認する。
+ * cards にカードがあるデッキ、または decks シートへ登録済みの空デッキだけを許可する。
  * 新規カードは学習履歴を空のまま保存し、未学習カードとして扱う。
  */
 function createCard(deckType, input) {
@@ -34,7 +34,7 @@ function createCard(deckType, input) {
       });
     }
 
-    if (!deckExistsForCreate_(cards, deck)) {
+    if (!deckExistsForCreate_(cards, deck) && !registeredDeckExists_(deck)) {
       throw new Error('追加先のデッキが見つかりません。デッキ一覧から開き直してください。');
     }
 
