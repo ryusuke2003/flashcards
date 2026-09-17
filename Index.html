@@ -185,8 +185,6 @@
   var sessionData = null;
   var queue = [];
   var index = 0;
-  var furthestIndex = 0;
-  var gradedCardIds = Object.create(null);
   var revealed = false;
   var mode = 'normal';
   var busy = false;
@@ -490,8 +488,6 @@
     sessionData = null;
     queue = [];
     index = 0;
-    furthestIndex = 0;
-    gradedCardIds = Object.create(null);
     setScreen('loading');
     callServer('getDecks', [], function (decks) {
       renderDecks(decks || []);
@@ -717,8 +713,6 @@
   function startQueue(cards, nextMode) {
     queue = cards.slice();
     index = 0;
-    furthestIndex = 0;
-    gradedCardIds = Object.create(null);
     mode = nextMode;
     setScreen('session');
     renderCard();
@@ -730,6 +724,14 @@
   }
 
   function currentCard() { return queue[index] || null; }
+
+  function remainingNormalQueue() {
+    return queue.filter(function (card) { return !card._gradedInSession; });
+  }
+
+  function syncNormalQueue() {
+    if (mode === 'normal' && sessionData) sessionData.queue = remainingNormalQueue();
+  }
 
   function displayQuestion(text) {
     return String(text || '').replace(/^\s*(?:【[A-Za-z0-9_-]+】|\[[A-Za-z0-9_-]+\])\s*/, '');
@@ -781,18 +783,16 @@
     if (!card) return;
 
     gradeTapLocked = true;
-    var cardId = card.id == null ? '' : String(card.id);
-    var alreadyGraded = !!gradedCardIds[cardId];
+    var alreadyGraded = !!card._gradedInSession;
 
     if (!alreadyGraded) {
       var practice = mode === 'mistakes' || mode === 'weak';
       enqueueGrade(card, !!correct, practice);
-      gradedCardIds[cardId] = true;
+      card._gradedInSession = true;
     }
 
     index++;
-    furthestIndex = Math.max(furthestIndex, index);
-    if (mode === 'normal' && sessionData) sessionData.queue = queue.slice(furthestIndex);
+    syncNormalQueue();
     renderCard();
     if (!alreadyGraded) scheduleGradeSyncAfterPaint();
 
@@ -806,7 +806,7 @@
   }
 
   function quitSession() {
-    if (mode === 'normal' && sessionData) sessionData.queue = queue.slice(furthestIndex);
+    syncNormalQueue();
     loadHome();
   }
 
@@ -957,13 +957,12 @@
 
     if (queue === pending.queueRef && sessionData === pending.sessionDataRef) {
       var restoreIndex = Math.min(pending.queueIndex, queue.length);
-      if (index > pending.queueIndex) restoreIndex = Math.min(index + 1, queue.length);
       queue.splice(restoreIndex, 0, pending.card);
-      furthestIndex = pending.furthestIndex;
+      if (!$('session').classList.contains('hidden') && index > restoreIndex) index++;
       adjustCountsForCard(sessionData, pending.card, 1);
 
       if (pending.mode === 'normal') {
-        sessionData.queue = queue.slice(furthestIndex);
+        syncNormalQueue();
       } else if (pending.sessionQueueIndex >= 0 && Array.isArray(sessionData.queue)) {
         var exists = sessionData.queue.some(function (item) {
           return String(item.id) === String(pending.card.id);
@@ -1051,16 +1050,14 @@
     var queueRef = queue;
     var sessionRef = sessionData;
     var deckKey = currentDeck ? currentDeck.key : null;
-    var furthestBeforeDelete = furthestIndex;
 
     closeEditor();
     queue.splice(deleteIndex, 1);
-    if (deleteIndex < furthestIndex) furthestIndex = Math.max(0, furthestIndex - 1);
     adjustCountsForCard(sessionData, card, -1);
 
     if (sessionData && Array.isArray(sessionData.queue)) {
       if (mode === 'normal') {
-        sessionData.queue = queue.slice(furthestIndex);
+        syncNormalQueue();
       } else {
         sessionData.queue = sessionData.queue.filter(function (item) {
           return String(item.id) !== String(card.id);
@@ -1076,7 +1073,6 @@
       sessionDataRef: sessionRef,
       deckKey: deckKey,
       mode: deleteMode,
-      furthestIndex: furthestBeforeDelete,
       expiresAt: Date.now() + 10000,
       undoOpen: true,
       committing: false,
