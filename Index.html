@@ -131,11 +131,12 @@
 
     <main id="session" class="hidden">
       <div class="session-top">
-        <button class="tool" id="quit-btn" title="終了">←</button>
+        <button class="tool" id="prev-btn" title="一個前の問題" aria-label="一個前の問題">←</button>
         <div class="progress"><div id="progress-fill"></div></div>
         <div class="counter" id="progress-text">0 / 0</div>
         <button class="tool" id="flag-btn" title="要確認">⚑</button>
         <button class="tool" id="edit-btn" title="編集">✎</button>
+        <button class="tool" id="quit-btn" title="終了" aria-label="学習を終了">×</button>
       </div>
       <div class="mode" id="mode-label"></div>
       <div class="card" id="card-area">
@@ -184,6 +185,8 @@
   var sessionData = null;
   var queue = [];
   var index = 0;
+  var furthestIndex = 0;
+  var gradedCardIds = Object.create(null);
   var revealed = false;
   var mode = 'normal';
   var busy = false;
@@ -487,6 +490,8 @@
     sessionData = null;
     queue = [];
     index = 0;
+    furthestIndex = 0;
+    gradedCardIds = Object.create(null);
     setScreen('loading');
     callServer('getDecks', [], function (decks) {
       renderDecks(decks || []);
@@ -712,6 +717,8 @@
   function startQueue(cards, nextMode) {
     queue = cards.slice();
     index = 0;
+    furthestIndex = 0;
+    gradedCardIds = Object.create(null);
     mode = nextMode;
     setScreen('session');
     renderCard();
@@ -744,6 +751,7 @@
     $('mode-label').textContent = (currentDeck ? currentDeck.name + ' ・ ' : '') + modeName;
     $('progress-text').textContent = (index + 1) + ' / ' + queue.length;
     $('progress-fill').style.width = ((index / queue.length) * 100) + '%';
+    $('prev-btn').disabled = index <= 0;
 
     $('front').textContent = displayQuestion(card.front_side);
     $('back').textContent = card.back_side || '';
@@ -773,19 +781,32 @@
     if (!card) return;
 
     gradeTapLocked = true;
-    var practice = mode === 'mistakes' || mode === 'weak';
-    enqueueGrade(card, !!correct, practice);
+    var cardId = card.id == null ? '' : String(card.id);
+    var alreadyGraded = !!gradedCardIds[cardId];
+
+    if (!alreadyGraded) {
+      var practice = mode === 'mistakes' || mode === 'weak';
+      enqueueGrade(card, !!correct, practice);
+      gradedCardIds[cardId] = true;
+    }
 
     index++;
-    if (mode === 'normal' && sessionData) sessionData.queue = queue.slice(index);
+    furthestIndex = Math.max(furthestIndex, index);
+    if (mode === 'normal' && sessionData) sessionData.queue = queue.slice(furthestIndex);
     renderCard();
-    scheduleGradeSyncAfterPaint();
+    if (!alreadyGraded) scheduleGradeSyncAfterPaint();
 
     setTimeout(function () { gradeTapLocked = false; }, 180);
   }
 
+  function previousCard() {
+    if (busy || gradeTapLocked || index <= 0) return;
+    index--;
+    renderCard();
+  }
+
   function quitSession() {
-    if (mode === 'normal' && sessionData) sessionData.queue = queue.slice(index);
+    if (mode === 'normal' && sessionData) sessionData.queue = queue.slice(furthestIndex);
     loadHome();
   }
 
@@ -938,10 +959,11 @@
       var restoreIndex = Math.min(pending.queueIndex, queue.length);
       if (index > pending.queueIndex) restoreIndex = Math.min(index + 1, queue.length);
       queue.splice(restoreIndex, 0, pending.card);
+      furthestIndex = pending.furthestIndex;
       adjustCountsForCard(sessionData, pending.card, 1);
 
       if (pending.mode === 'normal') {
-        sessionData.queue = queue.slice(index);
+        sessionData.queue = queue.slice(furthestIndex);
       } else if (pending.sessionQueueIndex >= 0 && Array.isArray(sessionData.queue)) {
         var exists = sessionData.queue.some(function (item) {
           return String(item.id) === String(pending.card.id);
@@ -1029,14 +1051,16 @@
     var queueRef = queue;
     var sessionRef = sessionData;
     var deckKey = currentDeck ? currentDeck.key : null;
+    var furthestBeforeDelete = furthestIndex;
 
     closeEditor();
     queue.splice(deleteIndex, 1);
+    if (deleteIndex < furthestIndex) furthestIndex = Math.max(0, furthestIndex - 1);
     adjustCountsForCard(sessionData, card, -1);
 
     if (sessionData && Array.isArray(sessionData.queue)) {
       if (mode === 'normal') {
-        sessionData.queue = queue.slice(index);
+        sessionData.queue = queue.slice(furthestIndex);
       } else {
         sessionData.queue = sessionData.queue.filter(function (item) {
           return String(item.id) !== String(card.id);
@@ -1052,6 +1076,7 @@
       sessionDataRef: sessionRef,
       deckKey: deckKey,
       mode: deleteMode,
+      furthestIndex: furthestBeforeDelete,
       expiresAt: Date.now() + 10000,
       undoOpen: true,
       committing: false,
@@ -1081,6 +1106,7 @@
   $('reveal-btn').addEventListener('click', reveal);
   $('wrong-btn').addEventListener('click', function () { grade(false); });
   $('right-btn').addEventListener('click', function () { grade(true); });
+  $('prev-btn').addEventListener('click', previousCard);
   $('quit-btn').addEventListener('click', quitSession);
   $('flag-btn').addEventListener('click', toggleFlag);
   $('edit-btn').addEventListener('click', openEditor);
