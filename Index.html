@@ -131,11 +131,12 @@
 
     <main id="session" class="hidden">
       <div class="session-top">
-        <button class="tool" id="quit-btn" title="終了">←</button>
+        <button class="tool" id="prev-btn" title="一個前の問題" aria-label="一個前の問題">←</button>
         <div class="progress"><div id="progress-fill"></div></div>
         <div class="counter" id="progress-text">0 / 0</div>
         <button class="tool" id="flag-btn" title="要確認">⚑</button>
         <button class="tool" id="edit-btn" title="編集">✎</button>
+        <button class="tool" id="quit-btn" title="終了" aria-label="学習を終了">×</button>
       </div>
       <div class="mode" id="mode-label"></div>
       <div class="card" id="card-area">
@@ -724,12 +725,28 @@
 
   function currentCard() { return queue[index] || null; }
 
+  function remainingUngradedQueue() {
+    return queue.filter(function (card) { return !card._gradedInSession; });
+  }
+
+  function syncNormalQueue() {
+    if (mode === 'normal' && sessionData) sessionData.queue = remainingUngradedQueue();
+  }
+
   function displayQuestion(text) {
     return String(text || '').replace(/^\s*(?:【[A-Za-z0-9_-]+】|\[[A-Za-z0-9_-]+\])\s*/, '');
   }
 
   function renderCard() {
     if (index >= queue.length) {
+      var remaining = remainingUngradedQueue();
+      if (remaining.length) {
+        queue = remaining;
+        index = 0;
+        syncNormalQueue();
+        renderCard();
+        return;
+      }
       if (mode === 'normal' && sessionData) sessionData.queue = [];
       showToast('復習が終わりました。');
       loadHome();
@@ -744,6 +761,7 @@
     $('mode-label').textContent = (currentDeck ? currentDeck.name + ' ・ ' : '') + modeName;
     $('progress-text').textContent = (index + 1) + ' / ' + queue.length;
     $('progress-fill').style.width = ((index / queue.length) * 100) + '%';
+    $('prev-btn').disabled = index <= 0;
 
     $('front').textContent = displayQuestion(card.front_side);
     $('back').textContent = card.back_side || '';
@@ -773,19 +791,31 @@
     if (!card) return;
 
     gradeTapLocked = true;
-    var practice = mode === 'mistakes' || mode === 'weak';
-    enqueueGrade(card, !!correct, practice);
+    var alreadyGraded = !!card._gradedInSession;
+
+    if (!alreadyGraded) {
+      var practice = mode === 'mistakes' || mode === 'weak';
+      enqueueGrade(card, !!correct, practice);
+      card._gradedInSession = true;
+      card._scheduleAdvancedInSession = !practice;
+    }
 
     index++;
-    if (mode === 'normal' && sessionData) sessionData.queue = queue.slice(index);
+    syncNormalQueue();
     renderCard();
-    scheduleGradeSyncAfterPaint();
+    if (!alreadyGraded) scheduleGradeSyncAfterPaint();
 
     setTimeout(function () { gradeTapLocked = false; }, 180);
   }
 
+  function previousCard() {
+    if (busy || gradeTapLocked || index <= 0) return;
+    index--;
+    renderCard();
+  }
+
   function quitSession() {
-    if (mode === 'normal' && sessionData) sessionData.queue = queue.slice(index);
+    syncNormalQueue();
     loadHome();
   }
 
@@ -858,13 +888,15 @@
     counts.total = Math.max(0, Number(counts.total || 0) + delta);
     if (card.flag === '⚑') counts.flagged = Math.max(0, Number(counts.flagged || 0) + delta);
 
-    var isFresh = card.box === '' || card.box == null;
-    if (isFresh) {
-      counts.fresh = Math.max(0, Number(counts.fresh || 0) + delta);
-    } else {
-      var due = normalizeDateText(card.due);
-      if (!due || due <= data.today) {
-        counts.due = Math.max(0, Number(counts.due || 0) + delta);
+    if (!card._scheduleAdvancedInSession) {
+      var isFresh = card.box === '' || card.box == null;
+      if (isFresh) {
+        counts.fresh = Math.max(0, Number(counts.fresh || 0) + delta);
+      } else {
+        var due = normalizeDateText(card.due);
+        if (!due || due <= data.today) {
+          counts.due = Math.max(0, Number(counts.due || 0) + delta);
+        }
       }
     }
 
@@ -936,12 +968,12 @@
 
     if (queue === pending.queueRef && sessionData === pending.sessionDataRef) {
       var restoreIndex = Math.min(pending.queueIndex, queue.length);
-      if (index > pending.queueIndex) restoreIndex = Math.min(index + 1, queue.length);
       queue.splice(restoreIndex, 0, pending.card);
+      if (!$('session').classList.contains('hidden') && index > restoreIndex) index++;
       adjustCountsForCard(sessionData, pending.card, 1);
 
       if (pending.mode === 'normal') {
-        sessionData.queue = queue.slice(index);
+        syncNormalQueue();
       } else if (pending.sessionQueueIndex >= 0 && Array.isArray(sessionData.queue)) {
         var exists = sessionData.queue.some(function (item) {
           return String(item.id) === String(pending.card.id);
@@ -1036,7 +1068,7 @@
 
     if (sessionData && Array.isArray(sessionData.queue)) {
       if (mode === 'normal') {
-        sessionData.queue = queue.slice(index);
+        syncNormalQueue();
       } else {
         sessionData.queue = sessionData.queue.filter(function (item) {
           return String(item.id) !== String(card.id);
@@ -1081,6 +1113,7 @@
   $('reveal-btn').addEventListener('click', reveal);
   $('wrong-btn').addEventListener('click', function () { grade(false); });
   $('right-btn').addEventListener('click', function () { grade(true); });
+  $('prev-btn').addEventListener('click', previousCard);
   $('quit-btn').addEventListener('click', quitSession);
   $('flag-btn').addEventListener('click', toggleFlag);
   $('edit-btn').addEventListener('click', openEditor);
