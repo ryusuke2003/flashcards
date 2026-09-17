@@ -119,9 +119,10 @@
         <button class="secondary hidden" id="due-btn">今日復習するべき問題</button>
         <button class="secondary hidden" id="mistakes-btn">今日間違えた問題だけ復習</button>
         <button class="secondary" id="weak-btn">苦手な問題を重点復習</button>
+        <button class="secondary" id="add-card-btn">＋ 新しいカードを追加</button>
       </div>
       <a id="sheet-link" class="link" href="#" target="_blank" rel="noopener">Google Sheets を開く ↗</a>
-      <div class="home-note">カードの追加・CSV取り込みは Google Sheets 側で行います。<br>Mac と iPhone は同じシートを見るため、自動的に同じ学習状態になります。</div>
+      <div class="home-note">このデッキへのカード追加はここから行えます。CSV取り込みや一括編集は Google Sheets 側を使ってください。<br>Mac と iPhone は同じシートを見るため、自動的に同じ学習状態になります。</div>
     </main>
 
     <main id="empty" class="hidden">
@@ -151,6 +152,22 @@
         <button class="success" id="right-btn">○ 正解</button>
       </div>
     </main>
+  </div>
+
+  <div class="overlay hidden" id="add-card-overlay">
+    <div class="panel">
+      <h2>新しいカードを追加</h2>
+      <label for="add-front">問題</label>
+      <textarea id="add-front" placeholder="問題を入力"></textarea>
+      <label for="add-back">答え</label>
+      <textarea id="add-back" placeholder="答えを入力"></textarea>
+      <label for="add-notes">メモ（任意）</label>
+      <textarea id="add-notes" placeholder="補足や覚え方など"></textarea>
+      <div class="row">
+        <button class="secondary" id="add-cancel">キャンセル</button>
+        <button class="primary" id="add-save">追加</button>
+      </div>
+    </div>
   </div>
 
   <div class="overlay hidden" id="edit-overlay">
@@ -833,6 +850,70 @@
     });
   }
 
+  function setAddCardSaving(saving) {
+    var button = $('add-save');
+    button.disabled = !!saving;
+    button.textContent = saving ? '追加中…' : '追加';
+  }
+
+  function openAddCard() {
+    if (!currentDeck || busy) return;
+    if (pendingDelete) {
+      showToast('削除の処理が終わってから追加してください。');
+      return;
+    }
+    if (hasPendingForDeck(currentDeck.key)) {
+      showToast('学習結果の同期が終わってから追加してください。');
+      processGradeQueue();
+      return;
+    }
+
+    $('add-front').value = '';
+    $('add-back').value = '';
+    $('add-notes').value = '';
+    setAddCardSaving(false);
+    $('add-card-overlay').classList.remove('hidden');
+    $('add-front').focus();
+  }
+
+  function closeAddCard() {
+    if (busy) return;
+    $('add-card-overlay').classList.add('hidden');
+  }
+
+  function saveNewCard() {
+    if (busy || !currentDeck) return;
+
+    var input = {
+      front_side: $('add-front').value,
+      back_side: $('add-back').value,
+      notes: $('add-notes').value
+    };
+    if (!input.front_side.trim() || !input.back_side.trim()) {
+      showToast('問題と答えは空にできません。');
+      return;
+    }
+    if (hasPendingForDeck(currentDeck.key)) {
+      showToast('学習結果の同期が終わってから追加してください。');
+      processGradeQueue();
+      return;
+    }
+
+    var deckKey = currentDeck.key;
+    busy = true;
+    setAddCardSaving(true);
+    callServer('createCard', [deckKey, input], function () {
+      busy = false;
+      setAddCardSaving(false);
+      $('add-card-overlay').classList.add('hidden');
+      sessionData = null;
+      showToast('カードを追加しました。');
+      refreshHomeFromServer(false);
+    }, function () {
+      setAddCardSaving(false);
+    });
+  }
+
   function setEditorSaving(saving) {
     var button = $('edit-save');
     button.disabled = !!saving;
@@ -1110,6 +1191,9 @@
   $('due-btn').addEventListener('click', startDue);
   $('mistakes-btn').addEventListener('click', startMistakes);
   $('weak-btn').addEventListener('click', startWeak);
+  $('add-card-btn').addEventListener('click', openAddCard);
+  $('add-cancel').addEventListener('click', closeAddCard);
+  $('add-save').addEventListener('click', saveNewCard);
   $('reveal-btn').addEventListener('click', reveal);
   $('wrong-btn').addEventListener('click', function () { grade(false); });
   $('right-btn').addEventListener('click', function () { grade(true); });
@@ -1121,6 +1205,9 @@
   $('edit-cancel').addEventListener('click', closeEditor);
   $('edit-save').addEventListener('click', saveEditor);
   $('undo-delete').addEventListener('click', undoPendingDelete);
+  $('add-card-overlay').addEventListener('click', function (event) {
+    if (event.target === $('add-card-overlay')) closeAddCard();
+  });
   $('edit-overlay').addEventListener('click', function (event) {
     if (event.target === $('edit-overlay')) closeEditor();
   });
