@@ -72,6 +72,7 @@
     .panel{width:min(560px,100%);max-height:90vh;overflow:auto;background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:18px}
     .panel h2{font-size:18px;margin:0 0 14px}
     .panel label{display:block;font-size:12px;color:var(--muted);margin:12px 0 6px}
+    .panel input{width:100%;background:var(--card2);color:var(--text);border:1px solid var(--border);border-radius:12px;padding:12px}
     .panel textarea{width:100%;min-height:92px;background:var(--card2);color:var(--text);border:1px solid var(--border);border-radius:12px;padding:10px;resize:vertical}
     .panel .row{display:flex;gap:10px;margin-top:14px}.panel .row button{flex:1;padding:13px}
     .undo-bar{position:fixed;left:50%;bottom:calc(24px + env(safe-area-inset-bottom));transform:translateX(-50%);width:min(640px,calc(100% - 32px));display:flex;align-items:center;gap:12px;background:#111827;color:#fff;padding:10px 12px;border-radius:14px;font-size:13px;z-index:55;box-shadow:0 8px 30px rgba(0,0,0,.3)}
@@ -97,7 +98,8 @@
       <div class="screen-title">デッキを選択</div>
       <div class="screen-note">Google Sheets の <code>type</code> 列ごとにデッキを分けています。</div>
       <div id="deck-list" class="deck-list"></div>
-      <div id="deck-empty" class="empty hidden">カードがありません。<br>Google Sheets の <code>cards</code> シートへCSVを取り込んでください。</div>
+      <div id="deck-empty" class="empty hidden">デッキがありません。<br>下のボタンから新規デッキを作成できます。</div>
+      <button class="secondary" id="create-deck-btn" style="width:100%;margin-top:12px">＋ 新規デッキを作成</button>
     </main>
 
     <main id="home" class="hidden">
@@ -119,9 +121,10 @@
         <button class="secondary hidden" id="due-btn">今日復習するべき問題</button>
         <button class="secondary hidden" id="mistakes-btn">今日間違えた問題だけ復習</button>
         <button class="secondary" id="weak-btn">苦手な問題を重点復習</button>
+        <button class="secondary" id="add-card-btn">＋ 新しいカードを追加</button>
       </div>
       <a id="sheet-link" class="link" href="#" target="_blank" rel="noopener">Google Sheets を開く ↗</a>
-      <div class="home-note">カードの追加・CSV取り込みは Google Sheets 側で行います。<br>Mac と iPhone は同じシートを見るため、自動的に同じ学習状態になります。</div>
+      <div class="home-note">このデッキへのカード追加はここから行えます。CSV取り込みや一括編集は Google Sheets 側を使ってください。<br>Mac と iPhone は同じシートを見るため、自動的に同じ学習状態になります。</div>
     </main>
 
     <main id="empty" class="hidden">
@@ -151,6 +154,34 @@
         <button class="success" id="right-btn">○ 正解</button>
       </div>
     </main>
+  </div>
+
+  <div class="overlay hidden" id="create-deck-overlay">
+    <div class="panel">
+      <h2>新規デッキを作成</h2>
+      <label for="create-deck-name">デッキ名</label>
+      <input id="create-deck-name" type="text" maxlength="80" autocomplete="off" placeholder="例：ネットワーク">
+      <div class="row">
+        <button class="secondary" id="create-deck-cancel">キャンセル</button>
+        <button class="primary" id="create-deck-save">作成</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="overlay hidden" id="add-card-overlay">
+    <div class="panel">
+      <h2>新しいカードを追加</h2>
+      <label for="add-front">問題</label>
+      <textarea id="add-front" placeholder="問題を入力"></textarea>
+      <label for="add-back">答え</label>
+      <textarea id="add-back" placeholder="答えを入力"></textarea>
+      <label for="add-notes">メモ（任意）</label>
+      <textarea id="add-notes" placeholder="補足や覚え方など"></textarea>
+      <div class="row">
+        <button class="secondary" id="add-cancel">キャンセル</button>
+        <button class="primary" id="add-save">追加</button>
+      </div>
+    </div>
   </div>
 
   <div class="overlay hidden" id="edit-overlay">
@@ -489,7 +520,7 @@
     queue = [];
     index = 0;
     setScreen('loading');
-    callServer('getDecks', [], function (decks) {
+    callServer('getDecksWithRegistry', [], function (decks) {
       renderDecks(decks || []);
       setScreen('decks');
     });
@@ -833,6 +864,118 @@
     });
   }
 
+  function setCreateDeckSaving(saving) {
+    var button = $('create-deck-save');
+    button.disabled = !!saving;
+    button.textContent = saving ? '作成中…' : '作成';
+  }
+
+  function openCreateDeck() {
+    if (busy) return;
+    $('create-deck-name').value = '';
+    setCreateDeckSaving(false);
+    $('create-deck-overlay').classList.remove('hidden');
+    $('create-deck-name').focus();
+  }
+
+  function closeCreateDeck() {
+    if (busy) return;
+    $('create-deck-overlay').classList.add('hidden');
+  }
+
+  function saveNewDeck() {
+    if (busy) return;
+    var name = $('create-deck-name').value.trim();
+    if (!name) {
+      showToast('デッキ名を入力してください。');
+      return;
+    }
+
+    busy = true;
+    setCreateDeckSaving(true);
+    callServer('createDeck', [name], function (result) {
+      busy = false;
+      setCreateDeckSaving(false);
+      $('create-deck-overlay').classList.add('hidden');
+      if (!result || !result.deck) {
+        showToast('デッキを作成しました。');
+        loadDecks();
+        return;
+      }
+
+      currentDeck = result.deck;
+      sessionData = null;
+      showToast('デッキを作成しました。');
+      loadHome();
+    }, function () {
+      setCreateDeckSaving(false);
+    });
+  }
+
+  function setAddCardSaving(saving) {
+    var button = $('add-save');
+    button.disabled = !!saving;
+    button.textContent = saving ? '追加中…' : '追加';
+  }
+
+  function openAddCard() {
+    if (!currentDeck || busy) return;
+    if (pendingDelete) {
+      showToast('削除の処理が終わってから追加してください。');
+      return;
+    }
+    if (hasPendingForDeck(currentDeck.key)) {
+      showToast('学習結果の同期が終わってから追加してください。');
+      processGradeQueue();
+      return;
+    }
+
+    $('add-front').value = '';
+    $('add-back').value = '';
+    $('add-notes').value = '';
+    setAddCardSaving(false);
+    $('add-card-overlay').classList.remove('hidden');
+    $('add-front').focus();
+  }
+
+  function closeAddCard() {
+    if (busy) return;
+    $('add-card-overlay').classList.add('hidden');
+  }
+
+  function saveNewCard() {
+    if (busy || !currentDeck) return;
+
+    var input = {
+      front_side: $('add-front').value,
+      back_side: $('add-back').value,
+      notes: $('add-notes').value
+    };
+    if (!input.front_side.trim() || !input.back_side.trim()) {
+      showToast('問題と答えは空にできません。');
+      return;
+    }
+    if (hasPendingForDeck(currentDeck.key)) {
+      showToast('学習結果の同期が終わってから追加してください。');
+      processGradeQueue();
+      return;
+    }
+
+    var deckKey = currentDeck.key;
+    busy = true;
+    setAddCardSaving(true);
+    callServer('createCard', [deckKey, input], function () {
+      busy = false;
+      setAddCardSaving(false);
+      $('add-card-overlay').classList.add('hidden');
+      sessionData = null;
+      showToast('カードを追加しました。');
+      refreshHomeFromServer(false);
+    }, function () {
+      setAddCardSaving(false);
+    });
+  }
+
   function setEditorSaving(saving) {
     var button = $('edit-save');
     button.disabled = !!saving;
@@ -1106,10 +1249,16 @@
   }
 
   $('decks-btn').addEventListener('click', loadDecks);
+  $('create-deck-btn').addEventListener('click', openCreateDeck);
+  $('create-deck-cancel').addEventListener('click', closeCreateDeck);
+  $('create-deck-save').addEventListener('click', saveNewDeck);
   $('start-btn').addEventListener('click', startNormal);
   $('due-btn').addEventListener('click', startDue);
   $('mistakes-btn').addEventListener('click', startMistakes);
   $('weak-btn').addEventListener('click', startWeak);
+  $('add-card-btn').addEventListener('click', openAddCard);
+  $('add-cancel').addEventListener('click', closeAddCard);
+  $('add-save').addEventListener('click', saveNewCard);
   $('reveal-btn').addEventListener('click', reveal);
   $('wrong-btn').addEventListener('click', function () { grade(false); });
   $('right-btn').addEventListener('click', function () { grade(true); });
@@ -1121,6 +1270,17 @@
   $('edit-cancel').addEventListener('click', closeEditor);
   $('edit-save').addEventListener('click', saveEditor);
   $('undo-delete').addEventListener('click', undoPendingDelete);
+  $('create-deck-name').addEventListener('keydown', function (event) {
+    if (event.key !== 'Enter') return;
+    event.preventDefault();
+    saveNewDeck();
+  });
+  $('create-deck-overlay').addEventListener('click', function (event) {
+    if (event.target === $('create-deck-overlay')) closeCreateDeck();
+  });
+  $('add-card-overlay').addEventListener('click', function (event) {
+    if (event.target === $('add-card-overlay')) closeAddCard();
+  });
   $('edit-overlay').addEventListener('click', function (event) {
     if (event.target === $('edit-overlay')) closeEditor();
   });

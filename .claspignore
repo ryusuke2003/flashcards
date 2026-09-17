@@ -5,6 +5,8 @@
 !GradeSync.js
 !DailyStats.js
 !CardDelete.js
+!CardCreate.js
+!Decks.js
 !Index.html
 
 # One-off vocab-maintenance scripts (see AGENT.md "Vocab-update workflow").
