@@ -72,6 +72,7 @@
     .panel{width:min(560px,100%);max-height:90vh;overflow:auto;background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:18px}
     .panel h2{font-size:18px;margin:0 0 14px}
     .panel label{display:block;font-size:12px;color:var(--muted);margin:12px 0 6px}
+    .panel input{width:100%;background:var(--card2);color:var(--text);border:1px solid var(--border);border-radius:12px;padding:12px}
     .panel textarea{width:100%;min-height:92px;background:var(--card2);color:var(--text);border:1px solid var(--border);border-radius:12px;padding:10px;resize:vertical}
     .panel .row{display:flex;gap:10px;margin-top:14px}.panel .row button{flex:1;padding:13px}
     .undo-bar{position:fixed;left:50%;bottom:calc(24px + env(safe-area-inset-bottom));transform:translateX(-50%);width:min(640px,calc(100% - 32px));display:flex;align-items:center;gap:12px;background:#111827;color:#fff;padding:10px 12px;border-radius:14px;font-size:13px;z-index:55;box-shadow:0 8px 30px rgba(0,0,0,.3)}
@@ -97,7 +98,8 @@
       <div class="screen-title">デッキを選択</div>
       <div class="screen-note">Google Sheets の <code>type</code> 列ごとにデッキを分けています。</div>
       <div id="deck-list" class="deck-list"></div>
-      <div id="deck-empty" class="empty hidden">カードがありません。<br>Google Sheets の <code>cards</code> シートへCSVを取り込んでください。</div>
+      <div id="deck-empty" class="empty hidden">デッキがありません。<br>下のボタンから新規デッキを作成できます。</div>
+      <button class="secondary" id="create-deck-btn" style="width:100%;margin-top:12px">＋ 新規デッキを作成</button>
     </main>
 
     <main id="home" class="hidden">
@@ -152,6 +154,18 @@
         <button class="success" id="right-btn">○ 正解</button>
       </div>
     </main>
+  </div>
+
+  <div class="overlay hidden" id="create-deck-overlay">
+    <div class="panel">
+      <h2>新規デッキを作成</h2>
+      <label for="create-deck-name">デッキ名</label>
+      <input id="create-deck-name" type="text" maxlength="80" autocomplete="off" placeholder="例：ネットワーク">
+      <div class="row">
+        <button class="secondary" id="create-deck-cancel">キャンセル</button>
+        <button class="primary" id="create-deck-save">作成</button>
+      </div>
+    </div>
   </div>
 
   <div class="overlay hidden" id="add-card-overlay">
@@ -506,7 +520,7 @@
     queue = [];
     index = 0;
     setScreen('loading');
-    callServer('getDecks', [], function (decks) {
+    callServer('getDecksWithRegistry', [], function (decks) {
       renderDecks(decks || []);
       setScreen('decks');
     });
@@ -850,6 +864,54 @@
     });
   }
 
+  function setCreateDeckSaving(saving) {
+    var button = $('create-deck-save');
+    button.disabled = !!saving;
+    button.textContent = saving ? '作成中…' : '作成';
+  }
+
+  function openCreateDeck() {
+    if (busy) return;
+    $('create-deck-name').value = '';
+    setCreateDeckSaving(false);
+    $('create-deck-overlay').classList.remove('hidden');
+    $('create-deck-name').focus();
+  }
+
+  function closeCreateDeck() {
+    if (busy) return;
+    $('create-deck-overlay').classList.add('hidden');
+  }
+
+  function saveNewDeck() {
+    if (busy) return;
+    var name = $('create-deck-name').value.trim();
+    if (!name) {
+      showToast('デッキ名を入力してください。');
+      return;
+    }
+
+    busy = true;
+    setCreateDeckSaving(true);
+    callServer('createDeck', [name], function (result) {
+      busy = false;
+      setCreateDeckSaving(false);
+      $('create-deck-overlay').classList.add('hidden');
+      if (!result || !result.deck) {
+        showToast('デッキを作成しました。');
+        loadDecks();
+        return;
+      }
+
+      currentDeck = result.deck;
+      sessionData = null;
+      showToast('デッキを作成しました。');
+      loadHome();
+    }, function () {
+      setCreateDeckSaving(false);
+    });
+  }
+
   function setAddCardSaving(saving) {
     var button = $('add-save');
     button.disabled = !!saving;
@@ -1187,6 +1249,9 @@
   }
 
   $('decks-btn').addEventListener('click', loadDecks);
+  $('create-deck-btn').addEventListener('click', openCreateDeck);
+  $('create-deck-cancel').addEventListener('click', closeCreateDeck);
+  $('create-deck-save').addEventListener('click', saveNewDeck);
   $('start-btn').addEventListener('click', startNormal);
   $('due-btn').addEventListener('click', startDue);
   $('mistakes-btn').addEventListener('click', startMistakes);
@@ -1205,6 +1270,14 @@
   $('edit-cancel').addEventListener('click', closeEditor);
   $('edit-save').addEventListener('click', saveEditor);
   $('undo-delete').addEventListener('click', undoPendingDelete);
+  $('create-deck-name').addEventListener('keydown', function (event) {
+    if (event.key !== 'Enter') return;
+    event.preventDefault();
+    saveNewDeck();
+  });
+  $('create-deck-overlay').addEventListener('click', function (event) {
+    if (event.target === $('create-deck-overlay')) closeCreateDeck();
+  });
   $('add-card-overlay').addEventListener('click', function (event) {
     if (event.target === $('add-card-overlay')) closeAddCard();
   });
