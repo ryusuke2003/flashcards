@@ -82,6 +82,39 @@ test('isPendingMistake_ keeps an older unresolved mistake pending until reviewed
   assert.equal(app.isPendingMistake_({ last_wrong: '2026-09-17', last_wrong_reviewed: '' }, today), false);
 });
 
+test('isAddedToday_ matches the normalized added date to today', () => {
+  const app = loadApp();
+  const today = '2026-09-19';
+
+  assert.equal(app.isAddedToday_({ added: '2026-9-19' }, today), true);
+  assert.equal(app.isAddedToday_({ added: '2026-09-18' }, today), false);
+  assert.equal(app.isAddedToday_({ added: '' }, today), false);
+});
+
+test('getSession exposes addedToday only for active cards in the selected deck', () => {
+  const app = loadApp();
+  const cards = [
+    { id: '1', type: 'A1', front_side: 'Q1', back_side: 'A1', exclude: '', box: '', added: '2026-09-19' },
+    { id: '2', type: 'A1', front_side: 'Q2', back_side: 'A2', exclude: '', box: '', added: '2026-09-18' },
+    { id: '3', type: 'A1', front_side: 'Q3', back_side: 'A3', exclude: 'x', box: '', added: '2026-09-19' },
+    { id: '4', type: 'セキスペ', front_side: 'Q4', back_side: 'A4', exclude: '', box: '', added: '2026-09-19' }
+  ];
+
+  app.getSheet_ = () => ({});
+  app.readCards_ = () => cards;
+  app.today_ = () => '2026-09-19';
+  app.SpreadsheetApp = {
+    getActiveSpreadsheet() {
+      return { getUrl: () => 'https://example.test/sheet' };
+    }
+  };
+
+  const session = app.getSession('A1');
+
+  assert.equal(session.counts.addedToday, 1);
+  assert.equal(session.counts.total, 2);
+});
+
 test('clampLimit_ falls back for invalid limits and caps large limits', () => {
   const app = loadApp();
 

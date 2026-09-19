@@ -166,6 +166,10 @@ function getSession(deckType) {
     return isPendingMistake_(card, today);
   }).length;
 
+  var addedToday = cards.filter(function (card) {
+    return isAddedToday_(card, today);
+  }).length;
+
   var boxCounts = {};
   for (var box = 1; box <= MAX_BOX; box++) boxCounts[box] = 0;
   cards.forEach(function (card) {
@@ -187,6 +191,7 @@ function getSession(deckType) {
       due: due.length,
       fresh: fresh.length,
       mistakesToday: mistakesToday,
+      addedToday: addedToday,
       flagged: cards.filter(function (card) { return card.flag === FLAG_MARK; }).length,
       box: boxCounts
     },
@@ -683,6 +688,10 @@ function isPendingMistake_(card, today) {
 
   var reviewed = normalizeDate_(card.last_wrong_reviewed);
   return !reviewed || reviewed < lastWrong;
+}
+
+function isAddedToday_(card, today) {
+  return normalizeDate_(card && card.added) === today;
 }
 
 function shuffle_(array) {
