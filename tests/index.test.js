@@ -35,3 +35,16 @@ test('deck home shows how many cards were added today', () => {
   assert.match(script, /\$\('added-today-count'\)\.textContent = data\.counts\.addedToday \|\| 0/);
   assert.match(script, /normalizeDateText\(card\.added\) === data\.today/);
 });
+
+
+test('deck home can start a session containing only cards added today', () => {
+  assert.match(html, /id="added-today-btn"[^>]*>今日追加した問題だけ学習<\/button>/);
+  assert.match(script, /callServer\('getTodaysAddedCards', \[currentDeck\.key\]/);
+  assert.match(script, /startQueue\(cards, 'added'\)/);
+  assert.match(script, /mode === 'added' \? '今日追加した問題だけ学習中'/);
+  assert.match(script, /\$\('added-today-btn'\)\.addEventListener\('click', startAddedToday\)/);
+});
+
+test('today-added mode schedules fresh cards but treats already learned cards as practice', () => {
+  assert.match(script, /mode === 'added' && card\.box !== '' && card\.box != null/);
+});
