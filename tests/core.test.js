@@ -82,6 +82,15 @@ test('isPendingMistake_ keeps an older unresolved mistake pending until reviewed
   assert.equal(app.isPendingMistake_({ last_wrong: '2026-09-17', last_wrong_reviewed: '' }, today), false);
 });
 
+test('isAddedToday_ matches the normalized added date to today', () => {
+  const app = loadApp();
+  const today = '2026-09-19';
+
+  assert.equal(app.isAddedToday_({ added: '2026-9-19' }, today), true);
+  assert.equal(app.isAddedToday_({ added: '2026-09-18' }, today), false);
+  assert.equal(app.isAddedToday_({ added: '' }, today), false);
+});
+
 test('clampLimit_ falls back for invalid limits and caps large limits', () => {
   const app = loadApp();
 
