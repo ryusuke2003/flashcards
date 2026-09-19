@@ -28,3 +28,10 @@ test('previous navigation keeps completed cards out of the resumable normal queu
   assert.match(script, /card\._scheduleAdvancedInSession = !practice/);
   assert.match(script, /if \(!card\._scheduleAdvancedInSession\)/);
 });
+
+
+test('deck home shows how many cards were added today', () => {
+  assert.match(html, /id="added-today-count"[^>]*>0<\/div><div class="l">今日追加した問題<\/div>/);
+  assert.match(script, /\$\('added-today-count'\)\.textContent = data\.counts\.addedToday \|\| 0/);
+  assert.match(script, /normalizeDateText\(card\.added\) === data\.today/);
+});
