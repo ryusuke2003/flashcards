@@ -115,6 +115,25 @@ test('getSession exposes addedToday only for active cards in the selected deck',
   assert.equal(session.counts.total, 2);
 });
 
+test('getTodaysAddedCards returns only active cards added today in the selected deck', () => {
+  const app = loadApp();
+  const cards = [
+    { id: 'a', type: 'A1', front_side: 'Q1', back_side: 'A1', exclude: '', added: '2026-09-19', right: 2, wrong: 1, _row: 2 },
+    { id: 'b', type: 'A1', front_side: 'Q2', back_side: 'A2', exclude: '', added: '2026-09-19', right: '', wrong: '', _row: 3 },
+    { id: 'c', type: 'A1', front_side: 'Q3', back_side: 'A3', exclude: '', added: '2026-09-18', right: '', wrong: '', _row: 4 },
+    { id: 'd', type: 'A1', front_side: 'Q4', back_side: 'A4', exclude: 'x', added: '2026-09-19', right: '', wrong: '', _row: 5 },
+    { id: 'e', type: 'セキスペ', front_side: 'Q5', back_side: 'A5', exclude: '', added: '2026-09-19', right: '', wrong: '', _row: 6 }
+  ];
+
+  app.getSheet_ = () => ({});
+  app.readCards_ = () => cards;
+  app.today_ = () => '2026-09-19';
+
+  const selected = Array.from(app.getTodaysAddedCards('A1'));
+
+  assert.deepEqual(selected.map((card) => card.id), ['b', 'a']);
+});
+
 test('clampLimit_ falls back for invalid limits and caps large limits', () => {
   const app = loadApp();
 

@@ -122,6 +122,7 @@
         <button class="primary" id="start-btn">学習を始める</button>
         <button class="secondary hidden" id="due-btn">今日復習するべき問題</button>
         <button class="secondary hidden" id="mistakes-btn">今日間違えた問題だけ復習</button>
+        <button class="secondary hidden" id="added-today-btn">今日追加した問題だけ学習</button>
         <button class="secondary" id="weak-btn">苦手な問題を重点復習</button>
         <button class="secondary" id="add-card-btn">＋ 新しいカードを追加</button>
       </div>
@@ -593,6 +594,7 @@
 
     $('due-btn').classList.toggle('hidden', !(data.counts.due > 0));
     $('mistakes-btn').classList.toggle('hidden', !(data.counts.mistakesToday > 0));
+    $('added-today-btn').classList.toggle('hidden', !(data.counts.addedToday > 0));
     $('sheet-link').href = data.sheetUrl || '#';
     setScreen('home');
   }
@@ -728,6 +730,27 @@
     });
   }
 
+  function startAddedToday() {
+    if (!currentDeck) return;
+    if (pendingDelete) {
+      showToast('削除の復元待ちが終わってから再取得してください。');
+      return;
+    }
+    if (hasPendingForDeck(currentDeck.key)) {
+      showToast('学習結果の同期が終わってから再取得してください。');
+      processGradeQueue();
+      return;
+    }
+    setScreen('loading');
+    callServer('getTodaysAddedCards', [currentDeck.key], function (cards) {
+      if (!cards || !cards.length) {
+        showEmpty('このデッキで今日追加したカードはありません。');
+        return;
+      }
+      startQueue(cards, 'added');
+    });
+  }
+
   function startWeak() {
     if (!currentDeck) return;
     if (pendingDelete) {
@@ -791,7 +814,7 @@
     revealed = false;
     busy = false;
 
-    var modeName = mode === 'mistakes' ? '今日の間違いだけ復習中' : mode === 'weak' ? '苦手カードを重点復習中' : mode === 'due' ? '今日復習するべき問題を復習中' : '通常学習';
+    var modeName = mode === 'mistakes' ? '今日の間違いだけ復習中' : mode === 'added' ? '今日追加した問題だけ学習中' : mode === 'weak' ? '苦手カードを重点復習中' : mode === 'due' ? '今日復習するべき問題を復習中' : '通常学習';
     $('mode-label').textContent = (currentDeck ? currentDeck.name + ' ・ ' : '') + modeName;
     $('progress-text').textContent = (index + 1) + ' / ' + queue.length;
     $('progress-fill').style.width = ((index / queue.length) * 100) + '%';
@@ -828,7 +851,8 @@
     var alreadyGraded = !!card._gradedInSession;
 
     if (!alreadyGraded) {
-      var practice = mode === 'mistakes' || mode === 'weak';
+      var practice = mode === 'mistakes' || mode === 'weak' ||
+        (mode === 'added' && card.box !== '' && card.box != null);
       enqueueGrade(card, !!correct, practice);
       card._gradedInSession = true;
       card._scheduleAdvancedInSession = !practice;
@@ -1262,6 +1286,7 @@
   $('start-btn').addEventListener('click', startNormal);
   $('due-btn').addEventListener('click', startDue);
   $('mistakes-btn').addEventListener('click', startMistakes);
+  $('added-today-btn').addEventListener('click', startAddedToday);
   $('weak-btn').addEventListener('click', startWeak);
   $('add-card-btn').addEventListener('click', openAddCard);
   $('add-cancel').addEventListener('click', closeAddCard);

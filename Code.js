@@ -223,6 +223,23 @@ function getTodaysMistakes(limit, deckType) {
   return cards.slice(0, max);
 }
 
+function getTodaysAddedCards(deckType) {
+  var today = today_();
+  var cards = filterCardsByDeck_(readCards_(getSheet_()).filter(isActiveCard_), deckType)
+    .filter(function (card) {
+      return isAddedToday_(card, today);
+    });
+
+  cards.sort(function (a, b) {
+    var attemptsA = (Number(a.right) || 0) + (Number(a.wrong) || 0);
+    var attemptsB = (Number(b.right) || 0) + (Number(b.wrong) || 0);
+    if (attemptsA !== attemptsB) return attemptsA - attemptsB;
+    return Number(a._row || 0) - Number(b._row || 0);
+  });
+
+  return cards.slice(0, SESSION_LIMIT);
+}
+
 function getWeakCards(limit, deckType) {
   var max = clampLimit_(limit, PRACTICE_LIMIT);
   var cards = filterCardsByDeck_(readCards_(getSheet_()).filter(isActiveCard_), deckType)
