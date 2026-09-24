@@ -75,6 +75,8 @@
     .panel label{display:block;font-size:12px;color:var(--muted);margin:12px 0 6px}
     .panel input{width:100%;background:var(--card2);color:var(--text);border:1px solid var(--border);border-radius:12px;padding:12px}
     .panel textarea{width:100%;min-height:92px;background:var(--card2);color:var(--text);border:1px solid var(--border);border-radius:12px;padding:10px;resize:vertical}
+    .math-preview{margin-top:7px;padding:10px 12px;border:1px solid var(--border);border-radius:12px;white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.5}
+    .math-preview-title{display:block;margin-bottom:4px;color:var(--muted);font-size:12px}
     .panel .row{display:flex;gap:10px;margin-top:14px}.panel .row button{flex:1;padding:13px}
     .undo-bar{position:fixed;left:50%;bottom:calc(24px + env(safe-area-inset-bottom));transform:translateX(-50%);width:min(640px,calc(100% - 32px));display:flex;align-items:center;gap:12px;background:#111827;color:#fff;padding:10px 12px;border-radius:14px;font-size:13px;z-index:55;box-shadow:0 8px 30px rgba(0,0,0,.3)}
     .undo-message{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -176,10 +178,13 @@
       <h2>新しいカードを追加</h2>
       <label for="add-front">問題</label>
       <textarea id="add-front" placeholder="問題を入力"></textarea>
+      <div class="math-preview hidden" id="add-front-preview"><span class="math-preview-title">表示プレビュー</span><div id="add-front-preview-text"></div></div>
       <label for="add-back">答え</label>
       <textarea id="add-back" placeholder="答えを入力"></textarea>
+      <div class="math-preview hidden" id="add-back-preview"><span class="math-preview-title">表示プレビュー</span><div id="add-back-preview-text"></div></div>
       <label for="add-notes">メモ（任意）</label>
       <textarea id="add-notes" placeholder="補足や覚え方など"></textarea>
+      <div class="math-preview hidden" id="add-notes-preview"><span class="math-preview-title">表示プレビュー</span><div id="add-notes-preview-text"></div></div>
       <div class="row">
         <button class="secondary" id="add-cancel">キャンセル</button>
         <button class="primary" id="add-save">追加</button>
@@ -192,10 +197,13 @@
       <h2>カードを編集</h2>
       <label for="edit-front">問題</label>
       <textarea id="edit-front"></textarea>
+      <div class="math-preview hidden" id="edit-front-preview"><span class="math-preview-title">表示プレビュー</span><div id="edit-front-preview-text"></div></div>
       <label for="edit-back">答え</label>
       <textarea id="edit-back"></textarea>
+      <div class="math-preview hidden" id="edit-back-preview"><span class="math-preview-title">表示プレビュー</span><div id="edit-back-preview-text"></div></div>
       <label for="edit-notes">メモ</label>
       <textarea id="edit-notes"></textarea>
+      <div class="math-preview hidden" id="edit-notes-preview"><span class="math-preview-title">表示プレビュー</span><div id="edit-notes-preview-text"></div></div>
       <div class="row">
         <button class="danger" id="edit-delete">カードを削除</button>
       </div>
@@ -794,6 +802,46 @@
     return String(text || '').replace(/^\s*(?:【[A-Za-z0-9_-]+】|\[[A-Za-z0-9_-]+\])\s*/, '');
   }
 
+  function appendPowerText(element, text) {
+    var power = /\^\{([^{}]+)\}|\^([0-9A-Za-z])/g;
+    var offset = 0;
+    var match;
+    while ((match = power.exec(text)) !== null) {
+      element.appendChild(document.createTextNode(text.slice(offset, match.index)));
+      var exponent = document.createElement('sup');
+      exponent.textContent = match[1] || match[2];
+      element.appendChild(exponent);
+      offset = power.lastIndex;
+    }
+    element.appendChild(document.createTextNode(text.slice(offset)));
+  }
+
+  function renderCardText(element, value) {
+    var text = String(value || '');
+    var inlineMath = /\\\(([\s\S]*?)\\\)/g;
+    var offset = 0;
+    var match;
+    element.textContent = '';
+    while ((match = inlineMath.exec(text)) !== null) {
+      appendPowerText(element, text.slice(offset, match.index));
+      if (/\^\{[^{}]+\}|\^[0-9A-Za-z]/.test(match[1])) {
+        appendPowerText(element, match[1]);
+      } else {
+        element.appendChild(document.createTextNode(match[0]));
+      }
+      offset = inlineMath.lastIndex;
+    }
+    appendPowerText(element, text.slice(offset));
+  }
+
+  function updateMathPreview(fieldId) {
+    var value = $(fieldId).value;
+    var preview = $(fieldId + '-preview');
+    var hasPower = /\^\{[^{}]+\}|\^[0-9A-Za-z]/.test(value);
+    preview.classList.toggle('hidden', !hasPower);
+    if (hasPower) renderCardText($(fieldId + '-preview-text'), value);
+  }
+
   function renderCard() {
     if (index >= queue.length) {
       var remaining = remainingUngradedQueue();
@@ -820,9 +868,9 @@
     $('progress-fill').style.width = ((index / queue.length) * 100) + '%';
     $('prev-btn').disabled = index <= 0;
 
-    $('front').textContent = displayQuestion(card.front_side);
-    $('back').textContent = card.back_side || '';
-    $('notes').textContent = card.notes || '';
+    renderCardText($('front'), displayQuestion(card.front_side));
+    renderCardText($('back'), card.back_side);
+    renderCardText($('notes'), card.notes);
 
     $('divider').classList.add('hidden');
     $('back').classList.add('hidden');
@@ -960,6 +1008,7 @@
     $('add-front').value = '';
     $('add-back').value = '';
     $('add-notes').value = '';
+    ['add-front', 'add-back', 'add-notes'].forEach(updateMathPreview);
     setAddCardSaving(false);
     $('add-card-overlay').classList.remove('hidden');
     $('add-front').focus();
@@ -1014,6 +1063,7 @@
     $('edit-front').value = card.front_side || '';
     $('edit-back').value = card.back_side || '';
     $('edit-notes').value = card.notes || '';
+    ['edit-front', 'edit-back', 'edit-notes'].forEach(updateMathPreview);
     $('edit-delete').disabled = !!pendingDelete;
     $('edit-delete').textContent = pendingDelete ? '直前の削除を復元待ち' : 'カードを削除';
     setEditorSaving(false);
@@ -1301,6 +1351,9 @@
   $('edit-delete').addEventListener('click', deleteEditorCard);
   $('edit-cancel').addEventListener('click', closeEditor);
   $('edit-save').addEventListener('click', saveEditor);
+  ['add-front', 'add-back', 'add-notes', 'edit-front', 'edit-back', 'edit-notes'].forEach(function (fieldId) {
+    $(fieldId).addEventListener('input', function () { updateMathPreview(fieldId); });
+  });
   $('undo-delete').addEventListener('click', undoPendingDelete);
   $('create-deck-name').addEventListener('keydown', function (event) {
     if (event.key !== 'Enter') return;
