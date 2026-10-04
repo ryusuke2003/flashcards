@@ -206,9 +206,7 @@ function getDueCards(deckType) {
       return card.box !== '' && isDue_(card.due, today);
     });
 
-  cards.sort(function (a, b) {
-    return String(a.due || '').localeCompare(String(b.due || ''));
-  });
+  shuffle_(cards);
 
   return cards.slice(0, SESSION_LIMIT);
 }

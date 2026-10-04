@@ -72,6 +72,36 @@ test('isDue_ treats blank and past dates as due but not future dates', () => {
   assert.equal(app.isDue_('2026-09-17', today), false);
 });
 
+test('getDueCards randomly selects from all due cards in the chosen deck before limiting', () => {
+  const app = loadApp();
+  app.today_ = () => '2026-10-04';
+  app.getSheet_ = () => ({});
+  const dueCards = Array.from({ length: 60 }, (_, index) => ({
+    id: String(index), type: 'A1', front_side: 'Q', back_side: 'A',
+    box: 1, due: index % 2 ? '2026-10-04' : '2026-10-01'
+  }));
+  app.readCards_ = () => dueCards.concat([
+    { ...dueCards[0], id: 'future', due: '2026-10-05' },
+    { ...dueCards[0], id: 'fresh', box: '' },
+    { ...dueCards[0], id: 'excluded', exclude: 'x' },
+    { ...dueCards[0], id: 'incomplete', back_side: '' },
+    { ...dueCards[0], id: 'other-deck', type: 'B1' }
+  ]);
+  // Controlled randomness makes selection and order assertions reproducible.
+  app.Math = Object.create(Math);
+  app.Math.random = () => 0;
+  const first = Array.from(app.getDueCards('A1'), card => card.id);
+  assert.equal(first.length, 50);
+  assert.equal(new Set(first).size, 50);
+  assert.deepEqual(first, dueCards.slice(1, 51).map(card => card.id));
+
+  app.Math.random = () => 0.999;
+  const second = Array.from(app.getDueCards('A1'), card => card.id);
+  assert.deepEqual(second, dueCards.slice(0, 50).map(card => card.id));
+  assert.notDeepEqual(first, second);
+  assert.equal(dueCards[0].id, '0');
+});
+
 test('isPendingMistake_ keeps an older unresolved mistake pending until reviewed', () => {
   const app = loadApp();
   const today = '2026-09-16';
