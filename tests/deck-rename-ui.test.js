@@ -26,8 +26,8 @@ test('deck list offers per-deck rename and delete actions outside the home scree
 
 test('successful rename refreshes the deck list', () => {
   assert.match(script, /callServer\('renameDeck', \[oldKey, newName\]/);
-  assert.match(script, /managedDeck = \{ key: key, name: deck\.name \|\| '未分類' \}/);
-  assert.match(script, /callServer\('renameDeck',[\s\S]*?managedDeck = null;[\s\S]*?loadDecks\(\);/);
+  assert.match(script, /managedDeck = Object\.assign\(\{\}, deck\)/);
+  assert.match(script, /managedDeck = null;[\s\S]*?loadDecks\(\);[\s\S]*?callServer\('renameDeck'/);
   assert.match(script, /\$\('rename-deck-save'\)\.addEventListener\('click', saveRenamedDeck\)/);
   assert.match(script, /hasPendingForDeck\(oldKey\)/);
 });
@@ -58,6 +58,6 @@ test('deck deletion requires confirmation and returns to the refreshed deck list
   assert.match(html, /id="delete-deck-overlay"/);
   assert.match(html, /単語は削除せず「未分類」に移動/);
   assert.match(script, /callServer\('deleteDeck', \[key\]/);
-  assert.match(script, /managedDeck = \{ key: deck\.key, name: deck\.name \}/);
+  assert.match(script, /managedDeck = Object\.assign\(\{\}, deck\)/);
   assert.match(script, /callServer\('deleteDeck',[\s\S]*?loadDecks\(\);/);
 });

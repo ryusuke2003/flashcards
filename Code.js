@@ -134,9 +134,22 @@ function getDecks() {
     });
 }
 
+/** カードと参照設定を同じロック内で読み、名前変更・削除と混在しない出題対象を返す。 */
+function readStudyScope_(deckType) {
+  var lock = LockService.getScriptLock();
+  lock.waitLock(15000);
+  try {
+    var cards = readCards_(getSheet_(), true).filter(isActiveCard_);
+    var deck = deckType == null ? null : getDeckSelection_(deckType);
+    return { cards: deck ? cardsForDeckSelection_(cards, deck) : cards, deck: deck };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
 function getSession(deckType) {
-  var sheet = getSheet_();
-  var cards = filterCardsByDeck_(readCards_(sheet).filter(isActiveCard_), deckType);
+  var scope = readStudyScope_(deckType);
+  var cards = scope.cards;
   var today = today_();
 
   var due = cards.filter(function (card) {
@@ -161,6 +174,7 @@ function getSession(deckType) {
     })
     .slice(0, SESSION_LIMIT)
     .map(function (item) { return item.card; });
+  shuffle_(queue);
 
   var mistakesToday = cards.filter(function (card) {
     return isPendingMistake_(card, today);
@@ -177,14 +191,10 @@ function getSession(deckType) {
     if (n >= 1 && n <= MAX_BOX) boxCounts[n]++;
   });
 
-  var normalizedDeck = deckType == null ? null : deckKey_(deckType);
   return {
     appVersion: APP_VERSION,
     today: today,
-    deck: normalizedDeck == null ? null : {
-      key: normalizedDeck,
-      name: normalizedDeck || UNTYPED_DECK_LABEL
-    },
+    deck: scope.deck,
     queue: queue,
     counts: {
       total: cards.length,
@@ -201,7 +211,7 @@ function getSession(deckType) {
 
 function getDueCards(deckType) {
   var today = today_();
-  var cards = filterCardsByDeck_(readCards_(getSheet_()).filter(isActiveCard_), deckType)
+  var cards = readStudyScope_(deckType).cards
     .filter(function (card) {
       return card.box !== '' && isDue_(card.due, today);
     });
@@ -213,7 +223,7 @@ function getDueCards(deckType) {
 function getTodaysMistakes(limit, deckType) {
   var max = clampLimit_(limit, ERROR_DRILL_LIMIT);
   var today = today_();
-  var cards = filterCardsByDeck_(readCards_(getSheet_()).filter(isActiveCard_), deckType)
+  var cards = readStudyScope_(deckType).cards
     .filter(function (card) {
       return isPendingMistake_(card, today);
     });
@@ -223,7 +233,7 @@ function getTodaysMistakes(limit, deckType) {
 
 function getTodaysAddedCards(deckType) {
   var today = today_();
-  var cards = filterCardsByDeck_(readCards_(getSheet_()).filter(isActiveCard_), deckType)
+  var cards = readStudyScope_(deckType).cards
     .filter(function (card) {
       return isAddedToday_(card, today);
     });
@@ -235,12 +245,12 @@ function getTodaysAddedCards(deckType) {
     return Number(a._row || 0) - Number(b._row || 0);
   });
 
-  return cards.slice(0, SESSION_LIMIT);
+  return shuffle_(cards.slice(0, SESSION_LIMIT));
 }
 
 function getWeakCards(limit, deckType) {
   var max = clampLimit_(limit, PRACTICE_LIMIT);
-  var cards = filterCardsByDeck_(readCards_(getSheet_()).filter(isActiveCard_), deckType)
+  var cards = readStudyScope_(deckType).cards
     .filter(function (card) {
       return card.box !== '';
     });
@@ -258,10 +268,11 @@ function getWeakCards(limit, deckType) {
     return b._weakScore - a._weakScore;
   });
 
-  return cards.slice(0, max).map(function (card) {
+  var selected = cards.slice(0, max).map(function (card) {
     delete card._weakScore;
     return card;
   });
+  return shuffle_(selected);
 }
 
 /**
@@ -494,12 +505,12 @@ function migrateLastWrongReviewed_(sheet) {
   sheet.getRange(2, COL.last_wrong_reviewed, reviewedValues.length, 1).setValues(reviewedValues);
 }
 
-function readCards_(sheet) {
+function readCards_(sheet, lockHeld) {
   var lastRow = sheet.getLastRow();
   if (lastRow < 2) return [];
 
   var rows = sheet.getRange(2, 1, lastRow - 1, HEADERS.length).getValues();
-  ensureStableCardIdsInRows_(sheet, rows);
+  ensureStableCardIdsInRows_(sheet, rows, lockHeld);
 
   var cards = [];
 
@@ -521,7 +532,7 @@ function readCards_(sheet) {
   return cards;
 }
 
-function ensureStableCardIdsInRows_(sheet, rows) {
+function ensureStableCardIdsInRows_(sheet, rows, lockHeld) {
   var seen = Object.create(null);
   var missingOffsets = [];
 
@@ -543,8 +554,8 @@ function ensureStableCardIdsInRows_(sheet, rows) {
 
   if (!missingOffsets.length) return;
 
-  var lock = LockService.getScriptLock();
-  lock.waitLock(15000);
+  var lock = lockHeld ? null : LockService.getScriptLock();
+  if (lock) lock.waitLock(15000);
   try {
     missingOffsets.forEach(function (offset) {
       var rowNumber = offset + 2;
@@ -565,7 +576,7 @@ function ensureStableCardIdsInRows_(sheet, rows) {
       seen[generated] = rowNumber;
     });
   } finally {
-    lock.releaseLock();
+    if (lock) lock.releaseLock();
   }
 }
 
@@ -662,10 +673,7 @@ function deckKey_(value) {
  */
 function filterCardsByDeck_(cards, deckType) {
   if (deckType === null || typeof deckType === 'undefined') return cards.slice();
-  var key = deckKey_(deckType);
-  return cards.filter(function (card) {
-    return deckKey_(card.type) === key;
-  });
+  return cardsForDeckSelection_(cards, getDeckSelection_(deckType));
 }
 
 // -----------------------------------------------------------------------------

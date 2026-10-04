@@ -12,6 +12,7 @@ var DAILY_STUDY_STATS_RETENTION_DAYS = 90;
  * ホーム画面用の公開API。
  * 導入初日にカウンタが未作成なら、既存の last_seen から
  * 「今日すでに触ったカード数」を初期値として採用する。
+ * まとめデッキには独立のカウンタを作らず、参照先のカウンタを合計する。
  */
 function getTodayStudyCount(deckType) {
   var deckKey = deckKey_(deckType);
@@ -21,31 +22,38 @@ function getTodayStudyCount(deckType) {
 
   try {
     var stats = readDailyStudyStats_(today);
-    var result = ensureDailyStudyCount_(stats, getSheet_(), today, deckKey);
-    if (result.initialized) writeDailyStudyStats_(today, stats, true);
+    var deck = getDeckSelection_(deckKey);
+    var initialized = false;
+    var count = deck.sourceKeys.reduce(function (total, sourceKey) {
+      var result = ensureDailyStudyCount_(stats, getSheet_(), today, sourceKey);
+      initialized = initialized || result.initialized;
+      return total + result.count;
+    }, 0);
+    if (initialized) writeDailyStudyStats_(today, stats, true);
 
     return {
       date: today,
       deckKey: deckKey,
-      count: result.count
+      count: count
     };
   } finally {
     lock.releaseLock();
   }
 }
 
-/** ScriptLock を保持した renameDeck() から呼び、今日の学習数を引き継ぐ。 */
-function renameTodayStudyDeckKey_(oldDeckKey, newDeckKey) {
+/** 所属を変更する前に両デッキの初期値を確定し、書き込み後に保存する関数を返す。 */
+function prepareDailyStudyDeckMove_(oldDeckKey, newDeckKey) {
   var today = today_();
   var stats = readDailyStudyStats_(today);
+  var sheet = getSheet_();
+  ensureDailyStudyCount_(stats, sheet, today, oldDeckKey);
+  ensureDailyStudyCount_(stats, sheet, today, newDeckKey);
   var oldProperty = dailyStudyDeckProperty_(oldDeckKey);
-  if (!Object.prototype.hasOwnProperty.call(stats, oldProperty)) return;
-
   var newProperty = dailyStudyDeckProperty_(newDeckKey);
   stats[newProperty] = Math.max(0, Number(stats[newProperty]) || 0) +
     Math.max(0, Number(stats[oldProperty]) || 0);
   delete stats[oldProperty];
-  writeDailyStudyStats_(today, stats, false);
+  return function () { writeDailyStudyStats_(today, stats, false); };
 }
 
 /**

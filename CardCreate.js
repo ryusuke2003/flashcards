@@ -3,15 +3,22 @@
  *
  * deckType は現在開いている既存デッキの key を受け取り、
  * cards にカードがあるデッキ、または decks シートへ登録済みの空デッキだけを許可する。
+ * まとめデッキでは sourceDeckId で指定された参照先の通常デッキへ1枚だけ保存する。
  * 新規カードは学習履歴を空のまま保存し、未学習カードとして扱う。
  */
-function createCard(deckType, input) {
+function createCard(deckType, input, sourceDeckId) {
   var deck = deckKey_(deckType);
   var card = normalizeNewCardInput_(input);
 
   var lock = LockService.getScriptLock();
   lock.waitLock(15000);
   try {
+    var selection = getDeckSelection_(deck);
+    if (selection.kind === 'combined') {
+      var source = selection.sources.filter(function (item) { return item.id === sourceDeckId; })[0];
+      if (!source) throw new Error('追加先の通常デッキを選択してください。');
+      deck = source.key;
+    }
     var sheet = getSheet_();
     var lastRow = sheet.getLastRow();
     var cards = [];
@@ -34,7 +41,8 @@ function createCard(deckType, input) {
       });
     }
 
-    if (!deckExistsForCreate_(cards, deck) && !registeredDeckExists_(deck)) {
+    if (!deckExistsForCreate_(cards, deck) && !registeredDeckExists_(deck) &&
+        !(selection.kind === 'combined' && deck === '')) {
       throw new Error('追加先のデッキが見つかりません。デッキ一覧から開き直してください。');
     }
 

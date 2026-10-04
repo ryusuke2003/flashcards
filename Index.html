@@ -91,6 +91,11 @@
     .panel h2{font-size:18px;margin:0 0 14px}
     .panel .hint{font-size:13px;color:var(--muted);line-height:1.6;margin:0 0 12px}
     .panel label{display:block;font-size:12px;color:var(--muted);margin:12px 0 6px}
+    .panel select{width:100%;background:var(--card2);color:var(--text);border:1px solid var(--border);border-radius:12px;padding:12px}
+    .source-options{max-height:240px;overflow:auto;border:1px solid var(--border);border-radius:12px;padding:6px 12px}
+    .source-options label{display:flex;align-items:center;gap:10px;color:var(--text);font-size:14px;margin:0;padding:10px 0}
+    .panel .source-options input{width:18px;height:18px;flex:none;padding:0;accent-color:var(--accent)}
+    .deck-sources{font-size:12px;color:var(--muted);line-height:1.5;margin-top:6px;overflow-wrap:anywhere}
     .panel input{width:100%;background:var(--card2);color:var(--text);border:1px solid var(--border);border-radius:12px;padding:12px}
     .panel textarea{width:100%;min-height:92px;background:var(--card2);color:var(--text);border:1px solid var(--border);border-radius:12px;padding:10px;resize:vertical}
     .math-preview{margin-top:7px;padding:10px 12px;border:1px solid var(--border);border-radius:12px;white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.5}
@@ -117,7 +122,7 @@
 
     <main id="decks" class="hidden">
       <div class="screen-title">デッキを選択</div>
-      <div class="screen-note">Google Sheets の <code>type</code> 列ごとにデッキを分けています。</div>
+      <div class="screen-note">通常デッキを選ぶか、複数のデッキをまとめて学習できます。</div>
       <div id="deck-list" class="deck-list"></div>
       <div id="deck-empty" class="empty hidden">デッキがありません。<br>下のボタンから新規デッキを作成できます。</div>
       <button class="secondary" id="create-deck-btn" style="width:100%;margin-top:12px">＋ 新規デッキを作成</button>
@@ -131,6 +136,7 @@
           <div class="home-study-today" id="today-study-count">今日の学習 …</div>
         </div>
       </div>
+      <p class="screen-note hidden" id="home-sources"></p>
       <div class="grid">
         <div class="stat"><div class="n" id="due-count">0</div><div class="l">今日の復習</div></div>
         <div class="stat"><div class="n" id="new-count">0</div><div class="l">未学習</div></div>
@@ -182,8 +188,14 @@
   <div class="overlay hidden" id="create-deck-overlay">
     <div class="panel">
       <h2>新規デッキを作成</h2>
+      <label for="create-deck-kind">種類</label>
+      <select id="create-deck-kind"><option value="normal">通常デッキ</option><option value="combined">まとめデッキ</option></select>
       <label for="create-deck-name">デッキ名</label>
       <input id="create-deck-name" type="text" maxlength="80" autocomplete="off" placeholder="例：ネットワーク">
+      <div id="create-deck-sources-section" class="hidden">
+        <p class="hint" style="margin-top:12px">通常デッキを2つ以上選択してください。カードと解答履歴を共有します。</p>
+        <div class="source-options" id="create-deck-sources"></div>
+      </div>
       <div class="row">
         <button class="secondary" id="create-deck-cancel" type="button">キャンセル</button>
         <button class="primary" id="create-deck-save" type="button">作成</button>
@@ -193,10 +205,14 @@
 
   <div class="overlay hidden" id="rename-deck-overlay">
     <div class="panel">
-      <h2>デッキ名を変更</h2>
-      <p class="hint">「<span id="rename-deck-current"></span>」のカードも新しいデッキ名に移動します。</p>
+      <h2 id="rename-deck-title">デッキ名を変更</h2>
+      <p class="hint" id="rename-deck-hint">「<span id="rename-deck-current"></span>」のカードも新しいデッキ名に移動します。</p>
       <label for="rename-deck-name">新しいデッキ名</label>
       <input id="rename-deck-name" type="text" maxlength="80" autocomplete="off">
+      <div id="rename-deck-sources-section" class="hidden">
+        <p class="hint" style="margin-top:12px">参照先を変更できます。選択が0個の場合は空のまとめデッキになります。</p>
+        <div class="source-options" id="rename-deck-sources"></div>
+      </div>
       <div class="row">
         <button class="secondary" id="rename-deck-cancel" type="button">キャンセル</button>
         <button class="primary" id="rename-deck-save" type="button">変更</button>
@@ -208,6 +224,7 @@
     <div class="panel">
       <h2>デッキを削除</h2>
       <p class="hint">「<span id="delete-deck-current"></span>」を削除します。単語は削除せず「未分類」に移動し、学習履歴も残します。</p>
+      <p class="hint" id="delete-deck-effect"></p>
       <div class="row">
         <button class="secondary" id="delete-deck-cancel">キャンセル</button>
         <button class="secondary danger" id="delete-deck-confirm">デッキを削除</button>
@@ -218,6 +235,10 @@
   <div class="overlay hidden" id="add-card-overlay">
     <div class="panel">
       <h2>新しいカードを追加</h2>
+      <div id="add-source-section" class="hidden">
+        <label for="add-source-deck">追加先の通常デッキ</label>
+        <select id="add-source-deck"></select>
+      </div>
       <label for="add-front">問題</label>
       <textarea id="add-front" placeholder="問題を入力"></textarea>
       <div class="math-preview hidden" id="add-front-preview"><span class="math-preview-title">表示プレビュー</span><div id="add-front-preview-text"></div></div>
@@ -266,6 +287,7 @@
   'use strict';
 
   var currentDeck = null;
+  var deckCatalog = [];
   var managedDeck = null;
   var sessionData = null;
   var queue = [];
@@ -277,6 +299,9 @@
   var pendingDelete = null;
   var pendingNormalStartDeckKey = null;
   var todayStudyCounts = Object.create(null);
+  var studyCountRevision = 0;
+  var screenRevision = 0;
+  var homeRequestRevision = 0;
   var renameDeckComposing = false;
   var skipRenameDeckClick = false;
   var mermaidLibraryPromise = null;
@@ -305,6 +330,7 @@
   }
 
   function setScreen(id) {
+    screenRevision++;
     ['loading', 'decks', 'home', 'empty', 'session'].forEach(function (name) {
       $(name).classList.toggle('hidden', name !== id);
     });
@@ -323,6 +349,7 @@
             correct: item.correct,
             practice: !!item.practice,
             deckKey: item.deckKey == null ? null : String(item.deckKey),
+            sourceDeckKey: item.sourceDeckKey == null ? null : String(item.sourceDeckKey),
             wasFresh: !!item.wasFresh,
             wasDue: !!item.wasDue,
             wasWrongToday: !!item.wasWrongToday,
@@ -371,10 +398,11 @@
   function refreshTodayStudyCount(deckKey) {
     var key = studyCountKey(deckKey);
     if (hasPendingForDeck(key)) return;
+    var revision = studyCountRevision;
 
     google.script.run
       .withSuccessHandler(function (result) {
-        if (!result) return;
+        if (!result || revision !== studyCountRevision || hasPendingForDeck(key)) return;
         todayStudyCounts[key] = Math.max(0, Number(result.count) || 0);
         if (currentDeck && studyCountKey(currentDeck.key) === key) renderTodayStudyCount(key);
       })
@@ -391,6 +419,7 @@
   }
 
   function enqueueGrade(card, correct, practice) {
+    studyCountRevision++;
     var wasFresh = card.box === '' || card.box == null;
     var wasDue = !wasFresh;
     var wasWrongToday = !!(sessionData && normalizeDateText(card.last_wrong) === sessionData.today);
@@ -402,6 +431,7 @@
       correct: !!correct,
       practice: !!practice,
       deckKey: currentDeck ? currentDeck.key : null,
+      sourceDeckKey: card.type == null ? '' : String(card.type).trim(),
       wasFresh: wasFresh,
       wasDue: wasDue,
       wasWrongToday: wasWrongToday,
@@ -409,7 +439,13 @@
     });
 
     if (!practice) applyOptimisticGrade(card, !!correct, wasFresh, wasDue, wasWrongToday);
-    incrementTodayStudyCount(currentDeck ? currentDeck.key : null);
+    var sourceKey = card.type == null ? '' : String(card.type).trim();
+    Object.keys(todayStudyCounts).forEach(function (key) {
+      if (deckScopeKeys(key).indexOf(sourceKey) !== -1) incrementTodayStudyCount(key);
+    });
+    if (currentDeck && !Object.prototype.hasOwnProperty.call(todayStudyCounts, currentDeck.key)) {
+      incrementTodayStudyCount(currentDeck.key);
+    }
     persistGradeQueue();
     updateSyncStatus();
   }
@@ -549,11 +585,23 @@
     }
   }
 
+  function deckScopeKeys(deckKey) {
+    var key = deckKey == null ? '' : String(deckKey);
+    var deck = currentDeck && currentDeck.key === key ? currentDeck : deckCatalog.find(function (item) { return item.key === key; });
+    return deck && Array.isArray(deck.sourceKeys) ? deck.sourceKeys : [key];
+  }
+
   function hasPendingForDeck(deckKey) {
     var key = deckKey == null ? '' : String(deckKey);
-    if (pendingDelete && String(pendingDelete.deckKey == null ? '' : pendingDelete.deckKey) === key) return true;
+    var scope = deckScopeKeys(key);
+    if (pendingDelete && scope.indexOf(String(pendingDelete.card.type || '').trim()) !== -1) return true;
     return gradeSync.queue.some(function (item) {
-      return item.deckKey == null || String(item.deckKey) === key;
+      if (item.sourceDeckKey != null) return scope.indexOf(item.sourceDeckKey) !== -1;
+      if (item.deckKey == null || String(item.deckKey) === key) return true;
+      var origin = deckCatalog.find(function (deck) { return deck.key === item.deckKey; });
+      // Old locally saved events may no longer resolve after a deck rename/deletion.
+      if (!origin) return true;
+      return deckScopeKeys(item.deckKey).some(function (source) { return scope.indexOf(source) !== -1; });
     });
   }
 
@@ -562,7 +610,7 @@
       continuePendingNormalStart();
       return;
     }
-    if (!currentDeck || $('home').classList.contains('hidden')) return;
+    if (!currentDeck || ($('home').classList.contains('hidden') && sessionData)) return;
     if (hasPendingForDeck(currentDeck.key)) return;
     refreshHomeFromServer(false);
   }
@@ -586,6 +634,9 @@
   }
 
   function renderDecks(decks) {
+    studyCountRevision++;
+    deckCatalog = decks;
+    todayStudyCounts = Object.create(null);
     var list = $('deck-list');
     list.textContent = '';
     $('deck-empty').classList.toggle('hidden', decks.length > 0);
@@ -622,8 +673,14 @@
       top.appendChild(count);
       button.appendChild(top);
       button.appendChild(meta);
+      if (deck.kind === 'combined') {
+        var sources = document.createElement('div');
+        sources.className = 'deck-sources';
+        sources.textContent = 'まとめ ・ ' + ((deck.sources || []).map(function (source) { return source.name; }).join(' / ') || '参照先なし');
+        button.appendChild(sources);
+      }
       button.addEventListener('click', function () {
-        currentDeck = { key: deck.key || '', name: deck.name || '未分類' };
+        currentDeck = Object.assign({}, deck);
         sessionData = null;
         loadHome();
       });
@@ -638,8 +695,8 @@
         'M3 21l4.5-1 12-12a2.12 2.12 0 0 0-3-3l-12 12L3 21Z',
         'M14.5 6.5l3 3'
       ]));
-      renameButton.setAttribute('aria-label', (deck.name || '未分類') + 'のデッキ名を変更');
-      renameButton.title = 'デッキ名を変更';
+      renameButton.setAttribute('aria-label', (deck.name || '未分類') + (deck.kind === 'combined' ? 'の名前・参照先を変更' : 'のデッキ名を変更'));
+      renameButton.title = deck.kind === 'combined' ? '名前・参照先を変更' : 'デッキ名を変更';
       renameButton.addEventListener('click', function () { openRenameDeck(deck); });
       manage.appendChild(renameButton);
 
@@ -677,6 +734,11 @@
   function renderHome(data) {
     if (!data || !data.counts || !currentDeck) return;
     $('selected-deck-name').textContent = currentDeck.name || '未分類';
+    var combined = currentDeck.kind === 'combined';
+    var sources = currentDeck.sources || [];
+    $('home-sources').classList.toggle('hidden', !combined);
+    $('home-sources').textContent = sources.length ? '参照先：' + sources.map(function (source) { return source.name; }).join(' / ') : '参照するデッキを一覧の編集ボタンから選択してください。';
+    $('add-card-btn').disabled = combined && !sources.length;
     renderTodayStudyCount(currentDeck.key);
     if (!hasPendingForDeck(currentDeck.key)) refreshTodayStudyCount(currentDeck.key);
 
@@ -704,9 +766,17 @@
     if (!currentDeck) return;
     var requestedDeckKey = currentDeck.key;
     if (showLoading) setScreen('loading');
+    if (hasPendingForDeck(requestedDeckKey)) {
+      if (sessionData) renderHome(sessionData);
+      processGradeQueue();
+      return;
+    }
 
+    var requestRevision = ++homeRequestRevision;
+    var requestedScreenRevision = screenRevision;
     callServer('getSession', [requestedDeckKey], function (data) {
       if (!currentDeck || currentDeck.key !== requestedDeckKey) return;
+      if (requestRevision !== homeRequestRevision || requestedScreenRevision !== screenRevision) return;
       if (hasPendingForDeck(requestedDeckKey)) {
         if (sessionData) renderHome(sessionData);
         return;
@@ -821,6 +891,11 @@
       showToast('削除の復元待ちが終わってから再取得してください。');
       return;
     }
+    if (hasPendingForDeck(currentDeck.key)) {
+      showToast('学習結果の同期が終わってから再取得してください。');
+      processGradeQueue();
+      return;
+    }
     setScreen('loading');
     callServer('getTodaysMistakes', [50, currentDeck.key], function (cards) {
       if (!cards || !cards.length) {
@@ -856,6 +931,11 @@
     if (!currentDeck) return;
     if (pendingDelete) {
       showToast('削除の復元待ちが終わってから再取得してください。');
+      return;
+    }
+    if (hasPendingForDeck(currentDeck.key)) {
+      showToast('学習結果の同期が終わってから再取得してください。');
+      processGradeQueue();
       return;
     }
     setScreen('loading');
@@ -1079,7 +1159,7 @@
     busy = false;
 
     var modeName = mode === 'mistakes' ? '今日の間違いだけ復習中' : mode === 'added' ? '今日追加した問題だけ学習中' : mode === 'weak' ? '苦手カードを重点復習中' : mode === 'due' ? '今日復習するべき問題を復習中' : '通常学習';
-    $('mode-label').textContent = (currentDeck ? currentDeck.name + ' ・ ' : '') + modeName;
+    $('mode-label').textContent = (currentDeck ? currentDeck.name + ' ・ ' : '') + modeName + (currentDeck && currentDeck.kind === 'combined' ? ' ・ 元デッキ：' + (String(card.type || '').trim() || '未分類') : '');
     $('progress-text').textContent = (index + 1) + ' / ' + queue.length;
     $('progress-fill').style.width = ((index / queue.length) * 100) + '%';
     $('prev-btn').disabled = index <= 0;
@@ -1162,9 +1242,45 @@
     button.textContent = saving ? '作成中…' : '作成';
   }
 
+  function sourceDeckChoices() {
+    var choices = deckCatalog.filter(function (deck) { return deck.kind !== 'combined'; });
+    if (!choices.some(function (deck) { return deck.key === ''; })) {
+      choices = choices.concat([{ id: 'deck-untyped', key: '', name: '未分類', kind: 'normal' }]);
+    }
+    return choices;
+  }
+
+  function renderSourceOptions(elementId, selectedIds) {
+    var container = $(elementId);
+    container.textContent = '';
+    sourceDeckChoices().forEach(function (deck) {
+      var label = document.createElement('label');
+      var input = document.createElement('input');
+      input.type = 'checkbox';
+      input.value = deck.id;
+      input.checked = selectedIds.indexOf(deck.id) !== -1;
+      var name = document.createElement('span');
+      name.textContent = deck.name + (deck.total != null ? '（' + deck.total + '枚）' : '');
+      label.appendChild(input);
+      label.appendChild(name);
+      container.appendChild(label);
+    });
+  }
+
+  function selectedSourceIds(elementId) {
+    return Array.from($(elementId).querySelectorAll('input:checked')).map(function (input) { return input.value; });
+  }
+
+  function updateCreateDeckKind() {
+    $('create-deck-sources-section').classList.toggle('hidden', $('create-deck-kind').value !== 'combined');
+  }
+
   function openCreateDeck() {
     if (busy) return;
     $('create-deck-name').value = '';
+    $('create-deck-kind').value = 'normal';
+    renderSourceOptions('create-deck-sources', []);
+    updateCreateDeckKind();
     setCreateDeckSaving(false);
     $('create-deck-overlay').classList.remove('hidden');
     $('create-deck-name').focus();
@@ -1183,9 +1299,15 @@
       return;
     }
 
+    var combined = $('create-deck-kind').value === 'combined';
+    var ids = selectedSourceIds('create-deck-sources');
+    if (combined && ids.length < 2) {
+      showToast('通常デッキを2つ以上選択してください。');
+      return;
+    }
     busy = true;
     setCreateDeckSaving(true);
-    callServer('createDeck', [name], function (result) {
+    var success = function (result) {
       busy = false;
       setCreateDeckSaving(false);
       $('create-deck-overlay').classList.add('hidden');
@@ -1199,9 +1321,10 @@
       sessionData = null;
       showToast('デッキを作成しました。');
       loadHome();
-    }, function () {
-      setCreateDeckSaving(false);
-    });
+    };
+    var failure = function () { setCreateDeckSaving(false); };
+    if (combined) callServer('createCombinedDeck', [name, ids], success, failure);
+    else callServer('createDeck', [name], success, failure);
   }
 
   function setRenameDeckSaving(saving) {
@@ -1219,8 +1342,12 @@
       return;
     }
 
-    managedDeck = { key: key, name: deck.name || '未分類' };
-    $('rename-deck-current').textContent = managedDeck.name;
+    managedDeck = Object.assign({}, deck);
+    var combined = managedDeck.kind === 'combined';
+    $('rename-deck-title').textContent = combined ? 'まとめデッキを編集' : 'デッキ名を変更';
+    $('rename-deck-hint').textContent = combined ? '名前と参照先を変更します。元カードと解答履歴は共有されます。' : '「' + managedDeck.name + '」のカードも新しいデッキ名に移動します。';
+    $('rename-deck-sources-section').classList.toggle('hidden', !combined);
+    if (combined) renderSourceOptions('rename-deck-sources', managedDeck.sourceDeckIds || []);
     $('rename-deck-name').value = key;
     renameDeckComposing = false;
     skipRenameDeckClick = false;
@@ -1249,7 +1376,7 @@
       showToast('新しいデッキ名を入力してください。');
       return;
     }
-    if (newName === oldKey) {
+    if (newName === oldKey && managedDeck.kind !== 'combined') {
       showToast('現在と同じデッキ名です。');
       return;
     }
@@ -1261,7 +1388,8 @@
 
     busy = true;
     setRenameDeckSaving(true);
-    callServer('renameDeck', [oldKey, newName], function (result) {
+    var combined = managedDeck.kind === 'combined';
+    var success = function (result) {
       busy = false;
       setRenameDeckSaving(false);
       $('rename-deck-overlay').classList.add('hidden');
@@ -1270,11 +1398,12 @@
         delete todayStudyCounts[oldKey];
       }
       managedDeck = null;
-      showToast('デッキ名を変更し、' + result.movedCards + '枚のカードを移動しました。');
+      showToast(combined ? 'まとめデッキを更新しました。' : 'デッキ名を変更し、' + result.movedCards + '枚のカードを移動しました。');
       loadDecks();
-    }, function () {
-      setRenameDeckSaving(false);
-    });
+    };
+    var failure = function () { setRenameDeckSaving(false); };
+    if (combined) callServer('updateCombinedDeck', [oldKey, newName, selectedSourceIds('rename-deck-sources')], success, failure);
+    else callServer('renameDeck', [oldKey, newName], success, failure);
   }
 
   function preventDeckEnterSubmission(event) {
@@ -1294,8 +1423,15 @@
       processGradeQueue();
       return;
     }
-    managedDeck = { key: deck.key, name: deck.name };
+    managedDeck = Object.assign({}, deck);
     $('delete-deck-current').textContent = managedDeck.name;
+    $('delete-deck-current').parentElement.classList.toggle('hidden', deck.kind === 'combined');
+    var dependents = deckCatalog.filter(function (item) {
+      return item.kind === 'combined' && (item.sourceDeckIds || []).indexOf(deck.id) !== -1;
+    });
+    $('delete-deck-effect').textContent = deck.kind === 'combined'
+      ? '「' + deck.name + '」の参照設定だけを削除します。元デッキ・カード・解答履歴は残ります。'
+      : (dependents.length ? '次のまとめデッキの参照先からも外れます：' + dependents.map(function (item) { return item.name; }).join(' / ') : '');
     setDeleteDeckSaving(false);
     $('delete-deck-overlay').classList.remove('hidden');
   }
@@ -1324,7 +1460,7 @@
       delete todayStudyCounts[key];
       delete todayStudyCounts[''];
       managedDeck = null;
-      showToast('デッキを削除し、' + result.movedCards + '枚のカードを未分類へ移動しました。');
+      showToast(result.kind === 'combined' ? 'まとめデッキを削除しました。' : 'デッキを削除し、' + result.movedCards + '枚のカードを未分類へ移動しました。');
       loadDecks();
     }, function () {
       setDeleteDeckSaving(false);
@@ -1349,6 +1485,19 @@
       return;
     }
 
+    var combined = currentDeck.kind === 'combined';
+    if (combined && !(currentDeck.sources || []).length) {
+      showToast('先に参照する通常デッキを選択してください。');
+      return;
+    }
+    $('add-source-section').classList.toggle('hidden', !combined);
+    $('add-source-deck').textContent = '';
+    (currentDeck.sources || []).forEach(function (source) {
+      var option = document.createElement('option');
+      option.value = source.id;
+      option.textContent = source.name;
+      $('add-source-deck').appendChild(option);
+    });
     $('add-front').value = '';
     $('add-back').value = '';
     $('add-notes').value = '';
@@ -1384,16 +1533,17 @@
     var deckKey = currentDeck.key;
     busy = true;
     setAddCardSaving(true);
-    callServer('createCard', [deckKey, input], function () {
+    var success = function () {
       busy = false;
       setAddCardSaving(false);
       $('add-card-overlay').classList.add('hidden');
       sessionData = null;
       showToast('カードを追加しました。');
       refreshHomeFromServer(false);
-    }, function () {
-      setAddCardSaving(false);
-    });
+    };
+    var failure = function () { setAddCardSaving(false); };
+    if (currentDeck.kind === 'combined') callServer('createCard', [deckKey, input, $('add-source-deck').value], success, failure);
+    else callServer('createCard', [deckKey, input], success, failure);
   }
 
   function setEditorSaving(saving) {
@@ -1614,6 +1764,8 @@
       return;
     }
 
+    if (currentDeck && currentDeck.kind === 'combined' && !window.confirm('元デッキ「' + (String(card.type || '').trim() || '未分類') + '」からカードを削除します。他のまとめデッキからも消えます。削除しますか？')) return;
+
     var sessionQueueIndex = -1;
     if (sessionData && Array.isArray(sessionData.queue)) {
       for (var i = 0; i < sessionData.queue.length; i++) {
@@ -1677,6 +1829,7 @@
   $('create-deck-btn').addEventListener('click', openCreateDeck);
   $('create-deck-cancel').addEventListener('click', closeCreateDeck);
   $('create-deck-save').addEventListener('click', saveNewDeck);
+  $('create-deck-kind').addEventListener('change', updateCreateDeckKind);
   $('rename-deck-cancel').addEventListener('click', closeRenameDeck);
   $('rename-deck-name').addEventListener('compositionstart', function () {
     renameDeckComposing = true;

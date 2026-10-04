@@ -18,6 +18,7 @@ function loadApp() {
     console,
     Date,
     Math,
+    LockService: { getScriptLock: () => ({ waitLock() {}, releaseLock() {} }) },
     Utilities: {
       formatDate(date) {
         return formatIsoDate(date);
@@ -38,6 +39,8 @@ function loadApp() {
     const source = fs.readFileSync(path.join(__dirname, '..', filename), 'utf8');
     vm.runInContext(source, sandbox, { filename });
   }
+  sandbox.getDeckSelection_ = key => ({ key: sandbox.deckKey_(key), name: key || '未分類', kind: 'normal', sourceKeys: [sandbox.deckKey_(key)] });
+  sandbox.cardsForDeckSelection_ = (cards, deck) => cards.filter(card => deck.sourceKeys.includes(sandbox.deckKey_(card.type)));
   return sandbox;
 }
 
@@ -161,7 +164,7 @@ test('getTodaysAddedCards returns only active cards added today in the selected 
 
   const selected = Array.from(app.getTodaysAddedCards('A1'));
 
-  assert.deepEqual(selected.map((card) => card.id), ['b', 'a']);
+  assert.deepEqual(selected.map((card) => card.id).sort(), ['a', 'b']);
 });
 
 test('clampLimit_ falls back for invalid limits and caps large limits', () => {
