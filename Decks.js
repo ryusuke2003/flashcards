@@ -49,6 +49,181 @@ function createDeck(name) {
   }
 }
 
+/**
+ * デッキ名と、そのデッキに属する全カードの type を変更する。
+ * 未分類（空の type）を名前付きデッキへ移すこともできる。
+ */
+function renameDeck(oldName, newName) {
+  var oldKey = deckKey_(oldName);
+  var newKey = normalizeNewDeckName_(newName);
+  if (oldKey === newKey) throw new Error('現在と同じデッキ名です。');
+
+  var lock = LockService.getScriptLock();
+  lock.waitLock(15000);
+  try {
+    var cardsSheet = getSheet_();
+    var lastCardRow = cardsSheet.getLastRow();
+    var cardRows = lastCardRow < 2 ? [] : cardsSheet.getRange(2, 1, lastCardRow - 1, HEADERS.length).getValues();
+    var cardsToMove = [];
+    var targetHasCards = false;
+
+    cardRows.forEach(function (row, index) {
+      if (!rowHasAnyData_(row)) return;
+      var key = deckKey_(row[COL.type - 1]);
+      if (key === oldKey) cardsToMove.push({ row: index + 2, original: row[COL.type - 1] });
+      if (key === newKey) targetHasCards = true;
+    });
+
+    var deckSheet = getDeckSheet_();
+    var lastDeckRow = deckSheet.getLastRow();
+    var registryValues = lastDeckRow < 2 ? [] : deckSheet.getRange(2, 1, lastDeckRow - 1, 1).getDisplayValues();
+    var oldRegistryRows = [];
+    var targetIsRegistered = false;
+
+    registryValues.forEach(function (row, index) {
+      var key = deckKey_(row[0]);
+      if (key === oldKey && key) oldRegistryRows.push({ row: index + 2, original: row[0] });
+      if (key === newKey) targetIsRegistered = true;
+    });
+
+    if (!cardsToMove.length && !oldRegistryRows.length) {
+      throw new Error('変更元のデッキが見つかりません。デッキ一覧から開き直してください。');
+    }
+    if (targetHasCards || targetIsRegistered) {
+      throw new Error('同じ名前のデッキがすでにあります。');
+    }
+
+    var attemptedCardRows = [];
+    var attemptedRegistryRows = [];
+    var appendedRegistryRow = null;
+    try {
+      var richName = SpreadsheetApp.newRichTextValue().setText(newKey).build();
+      groupConsecutiveDeckRows_(cardsToMove).forEach(function (group) {
+        attemptedCardRows = attemptedCardRows.concat(group);
+        var range = cardsSheet.getRange(group[0].row, COL.type, group.length, 1);
+        range.setNumberFormat('@');
+        range.setRichTextValues(group.map(function () { return [richName]; }));
+      });
+
+      if (oldRegistryRows.length) {
+        oldRegistryRows.forEach(function (entry) {
+          attemptedRegistryRows.push(entry);
+          setPlainTextValue_(deckSheet.getRange(entry.row, 1), newKey);
+        });
+      } else {
+        appendedRegistryRow = Math.max(2, deckSheet.getLastRow() + 1);
+        if (appendedRegistryRow > deckSheet.getMaxRows()) deckSheet.insertRowAfter(deckSheet.getMaxRows());
+        setPlainTextValue_(deckSheet.getRange(appendedRegistryRow, 1), newKey);
+        setPlainTextValue_(deckSheet.getRange(appendedRegistryRow, 2), today_());
+      }
+
+      renameTodayStudyDeckKey_(oldKey, newKey);
+    } catch (err) {
+      try {
+        attemptedRegistryRows.forEach(function (entry) {
+          setPlainTextValue_(deckSheet.getRange(entry.row, 1), entry.original);
+        });
+        if (appendedRegistryRow !== null) deckSheet.getRange(appendedRegistryRow, 1, 1, 2).clearContent();
+        attemptedCardRows.forEach(function (entry) {
+          setPlainTextValue_(cardsSheet.getRange(entry.row, COL.type), entry.original);
+        });
+      } catch (rollbackErr) {
+        throw new Error('デッキ名の変更を元に戻せませんでした。cards と decks シートを確認してください。');
+      }
+      throw err;
+    }
+
+    return {
+      ok: true,
+      deck: emptyDeckSummary_(newKey),
+      movedCards: cardsToMove.length
+    };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/** デッキの登録を消し、所属カードを未分類へ移す。カード本体は削除しない。 */
+function deleteDeck(name) {
+  var key = deckKey_(name);
+  if (!key) throw new Error('未分類デッキは削除できません。');
+
+  var lock = LockService.getScriptLock();
+  lock.waitLock(15000);
+  try {
+    var cardsSheet = getSheet_();
+    var lastCardRow = cardsSheet.getLastRow();
+    var cardRows = lastCardRow < 2 ? [] : cardsSheet.getRange(2, 1, lastCardRow - 1, HEADERS.length).getValues();
+    var cardsToMove = [];
+    cardRows.forEach(function (row, index) {
+      if (!rowHasAnyData_(row) || deckKey_(row[COL.type - 1]) !== key) return;
+      cardsToMove.push({ row: index + 2, original: row[COL.type - 1] });
+    });
+
+    var deckSheet = getDeckSheet_();
+    var lastDeckRow = deckSheet.getLastRow();
+    var registryValues = lastDeckRow < 2 ? [] : deckSheet.getRange(2, 1, lastDeckRow - 1, 2).getValues();
+    var registryRows = [];
+    registryValues.forEach(function (row, index) {
+      if (deckKey_(row[0]) !== key) return;
+      registryRows.push({ row: index + 2, type: row[0], created: row[1] });
+    });
+
+    if (!cardsToMove.length && !registryRows.length) {
+      throw new Error('削除するデッキが見つかりません。デッキ一覧から開き直してください。');
+    }
+
+    var attemptedCards = [];
+    var attemptedRegistry = [];
+    try {
+      groupConsecutiveDeckRows_(cardsToMove).forEach(function (group) {
+        attemptedCards = attemptedCards.concat(group);
+        cardsSheet.getRange(group[0].row, COL.type, group.length, 1).clearContent();
+      });
+      registryRows.forEach(function (entry) {
+        attemptedRegistry.push(entry);
+        deckSheet.getRange(entry.row, 1, 1, 2).clearContent();
+      });
+      renameTodayStudyDeckKey_(key, '');
+    } catch (err) {
+      try {
+        attemptedRegistry.forEach(function (entry) {
+          setPlainTextValue_(deckSheet.getRange(entry.row, 1), entry.type);
+          var createdRange = deckSheet.getRange(entry.row, 2);
+          if (entry.created === '' || entry.created === null) {
+            createdRange.clearContent();
+          } else {
+            createdRange.setValue(entry.created);
+          }
+        });
+        attemptedCards.forEach(function (entry) {
+          setPlainTextValue_(cardsSheet.getRange(entry.row, COL.type), entry.original);
+        });
+      } catch (rollbackErr) {
+        throw new Error('デッキの削除を元に戻せませんでした。cards と decks シートを確認してください。');
+      }
+      throw err;
+    }
+
+    return { ok: true, movedCards: cardsToMove.length };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function groupConsecutiveDeckRows_(entries) {
+  var groups = [];
+  (entries || []).forEach(function (entry) {
+    var group = groups[groups.length - 1];
+    if (group && group[group.length - 1].row + 1 === entry.row) {
+      group.push(entry);
+    } else {
+      groups.push([entry]);
+    }
+  });
+  return groups;
+}
+
 function normalizeNewDeckName_(value) {
   var deck = deckKey_(value);
   if (!deck) throw new Error('デッキ名を入力してください。');

@@ -27,10 +27,10 @@ test('creating a deck opens the new empty deck home', () => {
   assert.match(script, /currentDeck = result\.deck;[\s\S]*?sessionData = null;[\s\S]*?loadHome\(\);/);
 });
 
-test('new deck form can be submitted with Enter', () => {
-  assert.match(script, /\$\('create-deck-name'\)\.addEventListener\('keydown'/);
-  assert.match(script, /event\.key !== 'Enter'/);
-  assert.match(script, /saveNewDeck\(\)/);
+test('new deck form saves with its button and has no Enter submit handler', () => {
+  assert.match(html, /id="create-deck-save"[^>]*type="button"/);
+  assert.match(script, /\$\('create-deck-save'\)\.addEventListener\('click', saveNewDeck\)/);
+  assert.doesNotMatch(script, /\$\('create-deck-name'\)\.addEventListener\('keydown'/);
 });
 
 test('Index.html inline script remains valid JavaScript', () => {

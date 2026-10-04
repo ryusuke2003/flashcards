@@ -30,8 +30,14 @@
     .screen-title{font-size:18px;font-weight:800;margin:2px 0 12px}
     .screen-note{font-size:13px;color:var(--muted);line-height:1.6;margin:-4px 0 16px}
     .deck-list{display:flex;flex-direction:column;gap:10px}
-    .deck-button{width:100%;background:var(--card);color:var(--text);border:1px solid var(--border);padding:17px 18px;text-align:left;border-radius:var(--radius)}
-    .deck-button:active{transform:scale(.99)}
+    .deck-entry{display:flex;align-items:center;background:var(--card);border:1px solid var(--border);border-radius:var(--radius)}
+    .deck-button{flex:1;min-width:0;background:transparent;color:var(--text);padding:17px 0 17px 18px;text-align:left;border-radius:var(--radius)}
+    .deck-button:active{background:var(--card2)}
+    .deck-manage{display:flex;align-items:center;gap:4px;padding:0 10px 0 4px}
+    .deck-manage button{width:44px;height:44px;padding:0;display:grid;place-items:center;background:transparent;border:0}
+    .deck-manage button:hover,.deck-manage button:focus-visible{background:var(--card2)}
+    .deck-manage .danger:hover,.deck-manage .danger:focus-visible{background:rgba(229,83,60,.15)}
+    .deck-manage svg{width:21px;height:21px;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round;pointer-events:none}
     .deck-top{display:flex;align-items:center;justify-content:space-between;gap:12px}
     .deck-name{font-size:18px;font-weight:800;overflow-wrap:anywhere}
     .deck-count{font-size:13px;color:var(--accent);white-space:nowrap}
@@ -65,7 +71,17 @@
     .divider{width:44px;height:2px;background:var(--border)}
     .back{font-size:21px;line-height:1.5;white-space:pre-wrap;word-break:break-word}
     .notes{font-size:14px;color:var(--muted);border-top:1px dashed var(--border);padding-top:12px;width:100%;white-space:pre-wrap;word-break:break-word}
-    .front,.back,.notes{width:100%;text-align:left}
+    .front,.back,.notes{width:100%}
+    .front{text-align:center}
+    .back,.notes{text-align:left}
+    .front .code-block,.math-preview .code-block{max-width:100%;margin:12px 0;text-align:left;background:var(--card2);border:1px solid var(--border);border-radius:12px;overflow-x:auto}
+    .front .code-block{font-size:14px;font-weight:400;line-height:1.55}
+    .code-block[data-language]::before{content:attr(data-language);display:block;padding:9px 12px 0;color:var(--muted);font:600 11px/1.2 -apple-system,BlinkMacSystemFont,"Hiragino Sans",sans-serif;text-transform:uppercase}
+    .code-block code{display:block;padding:12px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;white-space:pre;word-break:normal;overflow-wrap:normal;width:max-content;min-width:100%}
+    .mermaid-block{max-width:100%;overflow-x:auto;white-space:normal}
+    .mermaid-block pre{margin:8px 0;white-space:pre;font-size:13px}
+    .mermaid-block svg{display:block;max-width:none}
+    .mermaid-block .mermaid-error{color:var(--red);white-space:pre-wrap}
     .study-actions{display:flex;gap:10px;margin-top:14px}
     .study-actions button{flex:1;padding:17px;font-size:16px}
     .reveal{width:100%;margin-top:14px}
@@ -73,6 +89,7 @@
     .overlay{position:fixed;inset:0;background:rgba(0,0,0,.58);display:flex;align-items:center;justify-content:center;padding:16px;z-index:20}
     .panel{width:min(560px,100%);max-height:90vh;overflow:auto;background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:18px}
     .panel h2{font-size:18px;margin:0 0 14px}
+    .panel .hint{font-size:13px;color:var(--muted);line-height:1.6;margin:0 0 12px}
     .panel label{display:block;font-size:12px;color:var(--muted);margin:12px 0 6px}
     .panel input{width:100%;background:var(--card2);color:var(--text);border:1px solid var(--border);border-radius:12px;padding:12px}
     .panel textarea{width:100%;min-height:92px;background:var(--card2);color:var(--text);border:1px solid var(--border);border-radius:12px;padding:10px;resize:vertical}
@@ -168,8 +185,32 @@
       <label for="create-deck-name">デッキ名</label>
       <input id="create-deck-name" type="text" maxlength="80" autocomplete="off" placeholder="例：ネットワーク">
       <div class="row">
-        <button class="secondary" id="create-deck-cancel">キャンセル</button>
-        <button class="primary" id="create-deck-save">作成</button>
+        <button class="secondary" id="create-deck-cancel" type="button">キャンセル</button>
+        <button class="primary" id="create-deck-save" type="button">作成</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="overlay hidden" id="rename-deck-overlay">
+    <div class="panel">
+      <h2>デッキ名を変更</h2>
+      <p class="hint">「<span id="rename-deck-current"></span>」のカードも新しいデッキ名に移動します。</p>
+      <label for="rename-deck-name">新しいデッキ名</label>
+      <input id="rename-deck-name" type="text" maxlength="80" autocomplete="off">
+      <div class="row">
+        <button class="secondary" id="rename-deck-cancel" type="button">キャンセル</button>
+        <button class="primary" id="rename-deck-save" type="button">変更</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="overlay hidden" id="delete-deck-overlay">
+    <div class="panel">
+      <h2>デッキを削除</h2>
+      <p class="hint">「<span id="delete-deck-current"></span>」を削除します。単語は削除せず「未分類」に移動し、学習履歴も残します。</p>
+      <div class="row">
+        <button class="secondary" id="delete-deck-cancel">キャンセル</button>
+        <button class="secondary danger" id="delete-deck-confirm">デッキを削除</button>
       </div>
     </div>
   </div>
@@ -225,6 +266,7 @@
   'use strict';
 
   var currentDeck = null;
+  var managedDeck = null;
   var sessionData = null;
   var queue = [];
   var index = 0;
@@ -235,6 +277,10 @@
   var pendingDelete = null;
   var pendingNormalStartDeckKey = null;
   var todayStudyCounts = Object.create(null);
+  var renameDeckComposing = false;
+  var skipRenameDeckClick = false;
+  var mermaidLibraryPromise = null;
+  var mermaidRenderQueue = Promise.resolve();
   var gradeSync = {
     storageKey: 'flashcards.pendingGrades.v1',
     batchSize: 5,
@@ -528,6 +574,7 @@
     }
     pendingNormalStartDeckKey = null;
     currentDeck = null;
+    managedDeck = null;
     sessionData = null;
     queue = [];
     index = 0;
@@ -544,6 +591,8 @@
     $('deck-empty').classList.toggle('hidden', decks.length > 0);
 
     decks.forEach(function (deck) {
+      var entry = document.createElement('div');
+      entry.className = 'deck-entry';
       var button = document.createElement('button');
       button.type = 'button';
       button.className = 'deck-button';
@@ -578,8 +627,51 @@
         sessionData = null;
         loadHome();
       });
-      list.appendChild(button);
+      entry.appendChild(button);
+
+      var manage = document.createElement('div');
+      manage.className = 'deck-manage';
+      var renameButton = document.createElement('button');
+      renameButton.type = 'button';
+      renameButton.className = 'secondary';
+      renameButton.appendChild(createDeckActionIcon([
+        'M3 21l4.5-1 12-12a2.12 2.12 0 0 0-3-3l-12 12L3 21Z',
+        'M14.5 6.5l3 3'
+      ]));
+      renameButton.setAttribute('aria-label', (deck.name || '未分類') + 'のデッキ名を変更');
+      renameButton.title = 'デッキ名を変更';
+      renameButton.addEventListener('click', function () { openRenameDeck(deck); });
+      manage.appendChild(renameButton);
+
+      if (deck.key) {
+        var deleteButton = document.createElement('button');
+        deleteButton.type = 'button';
+        deleteButton.className = 'secondary danger';
+        deleteButton.appendChild(createDeckActionIcon([
+          'M3 6h18', 'M8 6V4h8v2', 'M19 6l-1 14H6L5 6', 'M10 10v7', 'M14 10v7'
+        ]));
+        deleteButton.setAttribute('aria-label', deck.name + 'のデッキを削除');
+        deleteButton.title = 'デッキを削除';
+        deleteButton.addEventListener('click', function () { openDeleteDeck(deck); });
+        manage.appendChild(deleteButton);
+      }
+
+      entry.appendChild(manage);
+      list.appendChild(entry);
     });
+  }
+
+  function createDeckActionIcon(paths) {
+    var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('viewBox', '0 0 24 24');
+    svg.setAttribute('aria-hidden', 'true');
+    svg.setAttribute('focusable', 'false');
+    paths.forEach(function (data) {
+      var path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      path.setAttribute('d', data);
+      svg.appendChild(path);
+    });
+    return svg;
   }
 
   function renderHome(data) {
@@ -835,12 +927,135 @@
     appendPowerText(element, text.slice(offset));
   }
 
+  function splitFencedCode(value) {
+    var text = String(value || '');
+    var fence = /^[ \t]*```([A-Za-z0-9_+-]*)[ \t]*\r?\n([\s\S]*?)^[ \t]*```[ \t]*(?=\r?$)/gm;
+    var parts = [];
+    var offset = 0;
+    var match;
+    while ((match = fence.exec(text)) !== null) {
+      if (match.index > offset) parts.push({ type: 'text', value: text.slice(offset, match.index) });
+      parts.push({ type: 'code', language: match[1], value: match[2].replace(/\r?\n$/, '') });
+      offset = fence.lastIndex;
+    }
+    if (offset < text.length) parts.push({ type: 'text', value: text.slice(offset) });
+    return parts;
+  }
+
+  function renderQuestionText(element, value) {
+    element.textContent = '';
+    splitFencedCode(value).forEach(function (part) {
+      if (part.type === 'text') {
+        var text = document.createElement('span');
+        renderCardText(text, part.value);
+        element.appendChild(text);
+        return;
+      }
+      var block = document.createElement('pre');
+      block.className = 'code-block';
+      if (part.language) block.dataset.language = part.language;
+      var code = document.createElement('code');
+      code.textContent = part.value;
+      block.appendChild(code);
+      element.appendChild(block);
+    });
+  }
+
+  function splitMermaidNotes(value) {
+    var text = String(value || '');
+    var fence = /^[ \t]*```mermaid[ \t]*\r?\n([\s\S]*?)^[ \t]*```[ \t]*(?=\r?$)/gim;
+    var parts = [];
+    var offset = 0;
+    var match;
+    while ((match = fence.exec(text)) !== null) {
+      if (match.index > offset) parts.push({ type: 'text', value: text.slice(offset, match.index) });
+      parts.push({ type: 'diagram', value: match[1], raw: match[0] });
+      offset = fence.lastIndex;
+    }
+    if (offset < text.length) parts.push({ type: 'text', value: text.slice(offset) });
+    return parts;
+  }
+
+  function renderNotesText(element, value) {
+    element.textContent = '';
+    splitMermaidNotes(value).forEach(function (part) {
+      if (part.type === 'text') {
+        var text = document.createElement('span');
+        renderCardText(text, part.value);
+        element.appendChild(text);
+        return;
+      }
+      var block = document.createElement('div');
+      block.className = 'mermaid-block';
+      var source = document.createElement('pre');
+      source.className = 'mermaid mermaid-pending';
+      source.textContent = part.value;
+      source.dataset.mermaidSource = part.value;
+      source.dataset.mermaidRaw = part.raw;
+      block.appendChild(source);
+      element.appendChild(block);
+    });
+  }
+
+  function loadMermaid() {
+    if (!mermaidLibraryPromise) {
+      mermaidLibraryPromise = import('https://cdn.jsdelivr.net/npm/mermaid@11.17.2/dist/mermaid.esm.min.mjs')
+        .then(function (module) {
+          var mermaid = module.default;
+          mermaid.initialize({
+            startOnLoad: false,
+            securityLevel: 'strict',
+            suppressErrorRendering: true,
+            theme: window.matchMedia('(prefers-color-scheme: light)').matches ? 'default' : 'dark'
+          });
+          return mermaid;
+        });
+    }
+    return mermaidLibraryPromise;
+  }
+
+  function renderMermaidIn(element) {
+    Array.prototype.forEach.call(element.querySelectorAll('.mermaid-pending'), function (source) {
+      source.classList.remove('mermaid-pending');
+      mermaidRenderQueue = mermaidRenderQueue.then(function () {
+        if (!source.isConnected) return;
+        return loadMermaid().then(function (mermaid) {
+          if (!source.isConnected) return;
+          return mermaid.parse(source.dataset.mermaidSource, { suppressErrors: true }).then(function (valid) {
+            if (!valid) throw new Error('Invalid Mermaid diagram');
+            if (!source.isConnected) return;
+            return mermaid.run({ nodes: [source] });
+          });
+        });
+      }).catch(function () {
+        if (!source.isConnected) return;
+        source.classList.add('mermaid-error');
+        source.textContent = 'Mermaid図を表示できませんでした。\n' + source.dataset.mermaidRaw;
+      });
+    });
+  }
+
   function updateMathPreview(fieldId) {
     var value = $(fieldId).value;
     var preview = $(fieldId + '-preview');
     var hasPower = /\^\{[^{}]+\}|\^[0-9A-Za-z]/.test(value);
-    preview.classList.toggle('hidden', !hasPower);
-    if (hasPower) renderCardText($(fieldId + '-preview-text'), value);
+    var hasCode = /-front$/.test(fieldId) && splitFencedCode(value).some(function (part) {
+      return part.type === 'code';
+    });
+    var hasDiagram = /-notes$/.test(fieldId) && splitMermaidNotes(value).some(function (part) {
+      return part.type === 'diagram';
+    });
+    preview.classList.toggle('hidden', !hasPower && !hasCode && !hasDiagram);
+    if (!hasPower && !hasCode && !hasDiagram) return;
+    var previewText = $(fieldId + '-preview-text');
+    if (hasDiagram) {
+      renderNotesText(previewText, value);
+      renderMermaidIn(previewText);
+    } else if (/-front$/.test(fieldId)) {
+      renderQuestionText(previewText, value);
+    } else {
+      renderCardText(previewText, value);
+    }
   }
 
   function renderCard() {
@@ -869,9 +1084,9 @@
     $('progress-fill').style.width = ((index / queue.length) * 100) + '%';
     $('prev-btn').disabled = index <= 0;
 
-    renderCardText($('front'), displayQuestion(card.front_side));
+    renderQuestionText($('front'), displayQuestion(card.front_side));
     renderCardText($('back'), card.back_side);
-    renderCardText($('notes'), card.notes);
+    renderNotesText($('notes'), card.notes);
 
     $('divider').classList.add('hidden');
     $('back').classList.add('hidden');
@@ -887,6 +1102,7 @@
     $('divider').classList.remove('hidden');
     $('back').classList.remove('hidden');
     $('notes').classList.toggle('hidden', !currentCard().notes);
+    if (currentCard().notes) renderMermaidIn($('notes'));
     $('reveal-btn').classList.add('hidden');
     $('grade-actions').classList.remove('hidden');
   }
@@ -985,6 +1201,133 @@
       loadHome();
     }, function () {
       setCreateDeckSaving(false);
+    });
+  }
+
+  function setRenameDeckSaving(saving) {
+    var button = $('rename-deck-save');
+    button.disabled = !!saving;
+    button.textContent = saving ? '変更中…' : '変更';
+  }
+
+  function openRenameDeck(deck) {
+    if (!deck || busy) return;
+    var key = deck.key || '';
+    if (pendingDelete || hasPendingForDeck(key) || pendingNormalStartDeckKey !== null) {
+      showToast('学習結果や削除の処理が終わってからデッキ名を変更してください。');
+      processGradeQueue();
+      return;
+    }
+
+    managedDeck = { key: key, name: deck.name || '未分類' };
+    $('rename-deck-current').textContent = managedDeck.name;
+    $('rename-deck-name').value = key;
+    renameDeckComposing = false;
+    skipRenameDeckClick = false;
+    setRenameDeckSaving(false);
+    $('rename-deck-overlay').classList.remove('hidden');
+    $('rename-deck-name').focus();
+    $('rename-deck-name').select();
+  }
+
+  function closeRenameDeck() {
+    if (busy) return;
+    $('rename-deck-overlay').classList.add('hidden');
+    managedDeck = null;
+  }
+
+  function saveRenamedDeck(event) {
+    if (event && event.type === 'click' && (skipRenameDeckClick || renameDeckComposing)) {
+      skipRenameDeckClick = false;
+      $('rename-deck-name').blur();
+      return;
+    }
+    if (busy || !managedDeck) return;
+    var oldKey = managedDeck.key;
+    var newName = $('rename-deck-name').value.trim();
+    if (!newName) {
+      showToast('新しいデッキ名を入力してください。');
+      return;
+    }
+    if (newName === oldKey) {
+      showToast('現在と同じデッキ名です。');
+      return;
+    }
+    if (pendingDelete || hasPendingForDeck(oldKey) || pendingNormalStartDeckKey !== null) {
+      showToast('学習結果や削除の処理が終わってからデッキ名を変更してください。');
+      processGradeQueue();
+      return;
+    }
+
+    busy = true;
+    setRenameDeckSaving(true);
+    callServer('renameDeck', [oldKey, newName], function (result) {
+      busy = false;
+      setRenameDeckSaving(false);
+      $('rename-deck-overlay').classList.add('hidden');
+      if (Object.prototype.hasOwnProperty.call(todayStudyCounts, oldKey)) {
+        todayStudyCounts[result.deck.key] = todayStudyCounts[oldKey];
+        delete todayStudyCounts[oldKey];
+      }
+      managedDeck = null;
+      showToast('デッキ名を変更し、' + result.movedCards + '枚のカードを移動しました。');
+      loadDecks();
+    }, function () {
+      setRenameDeckSaving(false);
+    });
+  }
+
+  function preventDeckEnterSubmission(event) {
+    if (event.key === 'Enter' && event.target.tagName === 'BUTTON') event.preventDefault();
+  }
+
+  function setDeleteDeckSaving(saving) {
+    var button = $('delete-deck-confirm');
+    button.disabled = !!saving;
+    button.textContent = saving ? '削除中…' : 'デッキを削除';
+  }
+
+  function openDeleteDeck(deck) {
+    if (!deck || !deck.key || busy) return;
+    if (pendingDelete || hasPendingForDeck(deck.key) || pendingNormalStartDeckKey !== null) {
+      showToast('学習結果やカード削除の処理が終わってからデッキを削除してください。');
+      processGradeQueue();
+      return;
+    }
+    managedDeck = { key: deck.key, name: deck.name };
+    $('delete-deck-current').textContent = managedDeck.name;
+    setDeleteDeckSaving(false);
+    $('delete-deck-overlay').classList.remove('hidden');
+  }
+
+  function closeDeleteDeck() {
+    if (busy) return;
+    $('delete-deck-overlay').classList.add('hidden');
+    managedDeck = null;
+  }
+
+  function confirmDeleteDeck() {
+    if (!managedDeck || !managedDeck.key || busy) return;
+    var key = managedDeck.key;
+    if (pendingDelete || hasPendingForDeck(key) || pendingNormalStartDeckKey !== null) {
+      showToast('学習結果やカード削除の処理が終わってからデッキを削除してください。');
+      processGradeQueue();
+      return;
+    }
+
+    busy = true;
+    setDeleteDeckSaving(true);
+    callServer('deleteDeck', [key], function (result) {
+      busy = false;
+      setDeleteDeckSaving(false);
+      $('delete-deck-overlay').classList.add('hidden');
+      delete todayStudyCounts[key];
+      delete todayStudyCounts[''];
+      managedDeck = null;
+      showToast('デッキを削除し、' + result.movedCards + '枚のカードを未分類へ移動しました。');
+      loadDecks();
+    }, function () {
+      setDeleteDeckSaving(false);
     });
   }
 
@@ -1334,6 +1677,19 @@
   $('create-deck-btn').addEventListener('click', openCreateDeck);
   $('create-deck-cancel').addEventListener('click', closeCreateDeck);
   $('create-deck-save').addEventListener('click', saveNewDeck);
+  $('rename-deck-cancel').addEventListener('click', closeRenameDeck);
+  $('rename-deck-name').addEventListener('compositionstart', function () {
+    renameDeckComposing = true;
+  });
+  $('rename-deck-name').addEventListener('compositionend', function () {
+    renameDeckComposing = false;
+  });
+  $('rename-deck-save').addEventListener('pointerdown', function () {
+    skipRenameDeckClick = renameDeckComposing;
+  });
+  $('rename-deck-save').addEventListener('click', saveRenamedDeck);
+  $('delete-deck-cancel').addEventListener('click', closeDeleteDeck);
+  $('delete-deck-confirm').addEventListener('click', confirmDeleteDeck);
   $('start-btn').addEventListener('click', startNormal);
   $('due-btn').addEventListener('click', startDue);
   $('mistakes-btn').addEventListener('click', startMistakes);
@@ -1356,13 +1712,18 @@
     $(fieldId).addEventListener('input', function () { updateMathPreview(fieldId); });
   });
   $('undo-delete').addEventListener('click', undoPendingDelete);
-  $('create-deck-name').addEventListener('keydown', function (event) {
-    if (event.key !== 'Enter') return;
-    event.preventDefault();
-    saveNewDeck();
+  ['create-deck-overlay', 'rename-deck-overlay'].forEach(function (overlayId) {
+    $(overlayId).addEventListener('keydown', preventDeckEnterSubmission, true);
+    $(overlayId).addEventListener('keyup', preventDeckEnterSubmission, true);
   });
   $('create-deck-overlay').addEventListener('click', function (event) {
     if (event.target === $('create-deck-overlay')) closeCreateDeck();
+  });
+  $('rename-deck-overlay').addEventListener('click', function (event) {
+    if (event.target === $('rename-deck-overlay')) closeRenameDeck();
+  });
+  $('delete-deck-overlay').addEventListener('click', function (event) {
+    if (event.target === $('delete-deck-overlay')) closeDeleteDeck();
   });
   $('add-card-overlay').addEventListener('click', function (event) {
     if (event.target === $('add-card-overlay')) closeAddCard();

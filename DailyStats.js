@@ -34,6 +34,20 @@ function getTodayStudyCount(deckType) {
   }
 }
 
+/** ScriptLock を保持した renameDeck() から呼び、今日の学習数を引き継ぐ。 */
+function renameTodayStudyDeckKey_(oldDeckKey, newDeckKey) {
+  var today = today_();
+  var stats = readDailyStudyStats_(today);
+  var oldProperty = dailyStudyDeckProperty_(oldDeckKey);
+  if (!Object.prototype.hasOwnProperty.call(stats, oldProperty)) return;
+
+  var newProperty = dailyStudyDeckProperty_(newDeckKey);
+  stats[newProperty] = Math.max(0, Number(stats[newProperty]) || 0) +
+    Math.max(0, Number(stats[oldProperty]) || 0);
+  delete stats[oldProperty];
+  writeDailyStudyStats_(today, stats, false);
+}
+
 /**
  * GradeSync.js が ScriptLock 保持中に呼ぶ内部API。
  * 同じ eventId の再送は GradeSync 側で弾かれるため、ここでは単純に +1 する。
