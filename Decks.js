@@ -3,11 +3,22 @@ var DECK_HEADERS = ['type', 'created', 'deck_id', 'kind', 'source_deck_ids'];
 var MAX_DECK_NAME_LENGTH = 80;
 var UNTYPED_DECK_ID = 'deck-untyped';
 
-/** カードをコピーせず、通常デッキとまとめデッキの最新の集計を返す。 */
-function getDecksWithRegistry() {
+/** カードをコピーせず集計し、45秒再利用する。forceRefresh=trueならシートから再取得する。 */
+function getDecksWithRegistry(forceRefresh) {
   var lock = LockService.getScriptLock();
   lock.waitLock(15000);
+  var cacheHit = false;
   try {
+    var today = today_();
+    var cacheKey = deckSummaryCacheKey_(today);
+    if (forceRefresh === true) invalidateDeckSummaries_();
+    else {
+      var cached = readDeckSummariesCache_(cacheKey);
+      if (cached) {
+        cacheHit = true;
+        return cached;
+      }
+    }
     var cards = readCards_(getSheet_(), true);
     prepareDeckRegistry_(cards.map(function (card) { return deckKey_(card.type); }));
     var records = readDeckRecords_();
@@ -16,9 +27,8 @@ function getDecksWithRegistry() {
     if (active.some(function (card) { return !deckKey_(card.type); })) {
       selections.push(deckSelection_('', records));
     }
-    return selections.map(function (deck) {
+    var summaries = selections.map(function (deck) {
       var selected = cardsForDeckSelection_(active, deck);
-      var today = today_();
       return Object.assign({}, deck, {
         total: selected.length,
         due: selected.filter(function (card) { return card.box !== '' && isDue_(card.due, today); }).length,
@@ -27,8 +37,12 @@ function getDecksWithRegistry() {
         flagged: selected.filter(function (card) { return card.flag === FLAG_MARK; }).length
       });
     }).sort(compareDeckNames_);
+    writeDeckSummariesCache_(cacheKey, summaries);
+    return summaries;
   } finally {
-    lock.releaseLock();
+    // キャッシュ再利用時にはシートへアクセスしない。初回のID・デッキ登録は確定してから解放する。
+    if (cacheHit) lock.releaseLock();
+    else releaseSheetLock_(lock, false);
   }
 }
 
@@ -55,7 +69,7 @@ function createDeckRecord_(name, kind, sourceDeckIds) {
     applyDeckChanges_(getSheet_(), [], sheet, [{ row: row, values: record }]);
     return { ok: true, deck: deckSelection_(key, readDeckRecords_()) };
   } finally {
-    lock.releaseLock();
+    releaseSheetLock_(lock, true);
   }
 }
 
@@ -76,7 +90,7 @@ function updateCombinedDeck(oldName, newName, sourceDeckIds) {
     applyDeckChanges_(getSheet_(), [], getDeckSheet_(), [{ row: record.row, values: values }]);
     return { ok: true, deck: deckSelection_(newKey, readDeckRecords_()), movedCards: 0 };
   } finally {
-    lock.releaseLock();
+    releaseSheetLock_(lock, true);
   }
 }
 
@@ -113,7 +127,7 @@ function renameDeck(oldName, newName) {
     applyDeckChanges_(cardsSheet, cardsToMove, sheet, changes, saveStudyCounts);
     return { ok: true, deck: deckSelection_(newKey, readDeckRecords_()), movedCards: cardsToMove.length };
   } finally {
-    lock.releaseLock();
+    releaseSheetLock_(lock, true);
   }
 }
 
@@ -141,7 +155,7 @@ function deleteDeck(name) {
     applyDeckChanges_(cardsSheet, moves, getDeckSheet_(), changes, saveStudyCounts);
     return { ok: true, movedCards: moves.length, kind: record.kind };
   } finally {
-    lock.releaseLock();
+    releaseSheetLock_(lock, true);
   }
 }
 

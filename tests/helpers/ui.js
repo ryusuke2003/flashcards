@@ -65,7 +65,6 @@ function loadUI(app, options = {}) {
   elements.get('delete-deck-current').parentElement = new Element('p');
   const calls = [];
   const queuedGrades = [];
-  const queuedCounts = [];
   const queuedSessions = [];
   const stored = new Map();
   if (options.pendingGrades) stored.set('flashcards.pendingGrades.v1', JSON.stringify(options.pendingGrades));
@@ -79,10 +78,7 @@ function loadUI(app, options = {}) {
           try { success(JSON.parse(JSON.stringify(app[method](...args)))); }
           catch (err) { failure(err); }
         };
-        if (method === 'getTodayStudyCount' && options.delayCounts) {
-          const snapshot = JSON.parse(JSON.stringify(app[method](...args)));
-          queuedCounts.push(() => success(snapshot));
-        } else if (method === 'getSession' && options.delaySessions) {
+        if (method === 'getSession' && options.delaySessions) {
           const snapshot = JSON.parse(JSON.stringify(app[method](...args)));
           queuedSessions.push(() => success(snapshot));
         } else if (method === 'gradeCardsQueued' && options.delayGrades) queuedGrades.push(invoke);
@@ -111,7 +107,7 @@ function loadUI(app, options = {}) {
   vm.createContext(context);
   const script = html.match(/<script>([\s\S]*?)<\/script>/)[1].replace('  restoreGradeQueue();', `
   window.testUI = {
-    hasPendingForDeck, openRenameDeck, openDeleteDeck, loadDecks, refreshHomeFromServer, enqueueGrade, refreshTodayStudyCount, processGradeQueue,
+    hasPendingForDeck, openRenameDeck, openDeleteDeck, loadDecks, refreshHomeFromServer, enqueueGrade, processGradeQueue,
     getState: function () { return { currentDeck, sessionData, gradeSync, queue, todayStudyCounts }; }
   };
   restoreGradeQueue();`);
@@ -127,8 +123,6 @@ function loadUI(app, options = {}) {
     get, calls, confirms, ui: context.window.testUI, chooseDeck,
     flushNextSession() { queuedSessions.shift()?.(); },
     flushLastSession() { queuedSessions.pop()?.(); },
-    flushNextCount() { queuedCounts.shift()?.(); },
-    flushCounts() { while (queuedCounts.length) queuedCounts.shift()(); },
     flushGrades() { while (queuedGrades.length) queuedGrades.shift()(); },
     checkSource(elementId, sourceId) {
       const input = get(elementId).querySelectorAll('*').find(node => node.tagName === 'INPUT' && node.value === sourceId);

@@ -14,11 +14,18 @@ function formatIsoDate(date) {
 }
 
 function loadApp() {
+  const properties = {};
   const sandbox = {
     console,
     Date,
     Math,
     LockService: { getScriptLock: () => ({ waitLock() {}, releaseLock() {} }) },
+    PropertiesService: { getDocumentProperties: () => ({
+      getProperty: key => properties[key] || null,
+      setProperty(key, value) { properties[key] = value; },
+      getProperties: () => ({ ...properties }),
+      deleteProperty(key) { delete properties[key]; }
+    }) },
     Utilities: {
       formatDate(date) {
         return formatIsoDate(date);
@@ -35,7 +42,7 @@ function loadApp() {
   };
 
   vm.createContext(sandbox);
-  for (const filename of ['Code.js', 'GradeSync.js']) {
+  for (const filename of ['Code.js', 'DailyStats.js', 'GradeSync.js']) {
     const source = fs.readFileSync(path.join(__dirname, '..', filename), 'utf8');
     vm.runInContext(source, sandbox, { filename });
   }

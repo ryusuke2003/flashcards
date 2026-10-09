@@ -142,30 +142,30 @@ test('deck deletion explains reference changes and combined deletion preserves o
   assert.ok(!app.getDecksWithRegistry().some(deck => deck.key === 'まとめ'));
 });
 
-test('a delayed study-count response cannot overwrite a newer optimistic grade', () => {
+test('a delayed home response cannot overwrite a newer optimistic study count', () => {
   const { app } = setup();
-  const page = loadUI(app, { delayCounts: true });
+  const page = loadUI(app, { delaySessions: true });
   page.chooseDeck('まとめ');
-  page.flushCounts();
-  page.ui.refreshTodayStudyCount('まとめ');
+  page.flushNextSession();
+  page.ui.refreshHomeFromServer(false);
   page.ui.enqueueGrade(app.getDueCards('まとめ')[0], true, false);
   assert.equal(page.get('today-study-count').textContent, '今日の学習 1問');
-  page.flushNextCount();
+  page.flushNextSession();
   assert.equal(page.get('today-study-count').textContent, '今日の学習 1問');
 });
 
-test('an old study-count response remains stale after the newer grade has synced', () => {
+test('an old home study count remains stale after the newer grade has synced', () => {
   const { app } = setup();
-  const page = loadUI(app, { delayCounts: true, delayGrades: true });
+  const page = loadUI(app, { delaySessions: true, delayGrades: true });
   page.chooseDeck('まとめ');
-  page.flushCounts();
-  page.ui.refreshTodayStudyCount('まとめ');
+  page.flushNextSession();
+  page.ui.refreshHomeFromServer(false);
   page.ui.enqueueGrade(app.getDueCards('まとめ')[0], true, false);
   page.ui.processGradeQueue();
   page.flushGrades();
-  page.flushNextCount();
+  page.flushNextSession();
   assert.equal(page.get('today-study-count').textContent, '今日の学習 1問');
-  page.flushCounts();
+  page.flushNextSession();
   assert.equal(page.get('today-study-count').textContent, '今日の学習 1問');
 });
 

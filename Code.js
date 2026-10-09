@@ -135,22 +135,28 @@ function getDecks() {
 }
 
 /** カードと参照設定を同じロック内で読み、名前変更・削除と混在しない出題対象を返す。 */
-function readStudyScope_(deckType) {
+function readStudyScope_(deckType, includeStudyCount) {
   var lock = LockService.getScriptLock();
   lock.waitLock(15000);
   try {
-    var cards = readCards_(getSheet_(), true).filter(isActiveCard_);
+    var allCards = readCards_(getSheet_(), true);
+    var cards = allCards.filter(isActiveCard_);
     var deck = deckType == null ? null : getDeckSelection_(deckType);
-    return { cards: deck ? cardsForDeckSelection_(cards, deck) : cards, deck: deck };
+    var scope = { cards: deck ? cardsForDeckSelection_(cards, deck) : cards, deck: deck };
+    if (includeStudyCount) {
+      scope.today = today_();
+      scope.todayStudyCount = todayStudyCountFromCards_(allCards, deck, scope.today);
+    }
+    return scope;
   } finally {
     lock.releaseLock();
   }
 }
 
 function getSession(deckType) {
-  var scope = readStudyScope_(deckType);
+  var scope = readStudyScope_(deckType, true);
   var cards = scope.cards;
-  var today = today_();
+  var today = scope.today;
 
   var due = cards.filter(function (card) {
     return card.box !== '' && isDue_(card.due, today);
@@ -194,6 +200,7 @@ function getSession(deckType) {
   return {
     appVersion: APP_VERSION,
     today: today,
+    todayStudyCount: scope.todayStudyCount,
     deck: scope.deck,
     queue: queue,
     counts: {
@@ -322,7 +329,7 @@ function gradeCard(rowNumber, correct, practice) {
 
     return { ok: true, box: newBox, due: due };
   } finally {
-    lock.releaseLock();
+    releaseSheetLock_(lock, true);
   }
 }
 
@@ -341,7 +348,7 @@ function updateCardById(cardId, rowHint, patch) {
     applyCardPatch_(sheet, row, patch);
     return { ok: true, row: row, cardId: id };
   } finally {
-    lock.releaseLock();
+    releaseSheetLock_(lock, true);
   }
 }
 
@@ -360,7 +367,7 @@ function updateCard(rowNumber, patch) {
     applyCardPatch_(sheet, row, patch);
     return { ok: true, row: row };
   } finally {
-    lock.releaseLock();
+    releaseSheetLock_(lock, true);
   }
 }
 
@@ -506,33 +513,41 @@ function migrateLastWrongReviewed_(sheet) {
 }
 
 function readCards_(sheet, lockHeld) {
-  var lastRow = sheet.getLastRow();
-  if (lastRow < 2) return [];
+  // IDの確認から一括保存まで同じロックで保護し、並行する追加・削除と混在させない。
+  var lock = lockHeld ? null : LockService.getScriptLock();
+  if (lock) lock.waitLock(15000);
+  try {
+    var lastRow = sheet.getLastRow();
+    if (lastRow < 2) return [];
 
-  var rows = sheet.getRange(2, 1, lastRow - 1, HEADERS.length).getValues();
-  ensureStableCardIdsInRows_(sheet, rows, lockHeld);
+    var rows = sheet.getRange(2, 1, lastRow - 1, HEADERS.length).getValues();
+    ensureStableCardIdsInRows_(sheet, rows);
 
-  var cards = [];
+    var cards = [];
 
-  for (var r = 0; r < rows.length; r++) {
-    var values = rows[r];
-    var card = { _row: r + 2 };
-    var hasData = false;
+    for (var r = 0; r < rows.length; r++) {
+      var values = rows[r];
+      var card = { _row: r + 2 };
+      var hasData = false;
 
-    for (var c = 0; c < HEADERS.length; c++) {
-      var key = HEADERS[c];
-      var value = values[c];
-      if (value !== '' && value !== null) hasData = true;
-      card[key] = serializeCell_(key, value);
+      for (var c = 0; c < HEADERS.length; c++) {
+        var key = HEADERS[c];
+        var value = values[c];
+        if (value !== '' && value !== null) hasData = true;
+        card[key] = serializeCell_(key, value);
+      }
+
+      if (hasData) cards.push(card);
     }
 
-    if (hasData) cards.push(card);
+    return cards;
+  } finally {
+    if (lock) lock.releaseLock();
   }
-
-  return cards;
 }
 
-function ensureStableCardIdsInRows_(sheet, rows, lockHeld) {
+/** 呼び出し元がScriptLockを保持する。既存IDと空行は書き換えず、空IDが続く区間を一括保存する。 */
+function ensureStableCardIdsInRows_(sheet, rows) {
   var seen = Object.create(null);
   var missingOffsets = [];
 
@@ -554,29 +569,81 @@ function ensureStableCardIdsInRows_(sheet, rows, lockHeld) {
 
   if (!missingOffsets.length) return;
 
-  var lock = lockHeld ? null : LockService.getScriptLock();
-  if (lock) lock.waitLock(15000);
+  var groups = [];
+  missingOffsets.forEach(function (offset) {
+    var generated = makeStableCardId_(seen);
+    seen[generated] = offset + 2;
+    var group = groups[groups.length - 1];
+    if (!group || group[group.length - 1].offset + 1 !== offset) {
+      group = [];
+      groups.push(group);
+    }
+    group.push({ offset: offset, id: generated });
+  });
   try {
-    missingOffsets.forEach(function (offset) {
-      var rowNumber = offset + 2;
-      var currentId = cardIdText_(sheet.getRange(rowNumber, COL.id).getDisplayValue());
-
-      if (currentId) {
-        if (Object.prototype.hasOwnProperty.call(seen, currentId)) {
-          throw new Error('カードID「' + currentId + '」が重複しています。シート診断で確認してください。');
-        }
-        rows[offset][COL.id - 1] = currentId;
-        seen[currentId] = rowNumber;
-        return;
-      }
-
-      var generated = makeStableCardId_(seen);
-      setPlainTextValue_(sheet.getRange(rowNumber, COL.id), generated);
-      rows[offset][COL.id - 1] = generated;
-      seen[generated] = rowNumber;
+    groups.forEach(function (group) {
+      var range = sheet.getRange(group[0].offset + 2, COL.id, group.length, 1);
+      var ids = group.map(function (entry) {
+        return [SpreadsheetApp.newRichTextValue().setText(entry.id).build()];
+      });
+      range.setNumberFormat('@');
+      range.setRichTextValues(ids);
+      group.forEach(function (entry) { rows[entry.offset][COL.id - 1] = entry.id; });
     });
   } finally {
-    if (lock) lock.releaseLock();
+    // 一部の区間で保存に失敗した場合も、先に保存したIDをロック保持中に確定する。
+    SpreadsheetApp.flush();
+  }
+}
+
+// キャッシュは一覧の集計だけに使用する。学習カードは常にシートから取得する。
+var DECK_SUMMARY_CACHE_TTL = 45;
+
+function deckSummaryCacheKey_(date) {
+  return 'deck_summaries_v1:' + date;
+}
+
+function readDeckSummariesCache_(key) {
+  try {
+    var raw = CacheService.getScriptCache().get(key);
+    if (!raw) return null;
+    var cached = JSON.parse(raw);
+    return cached && cached.expiresAt > Date.now() && Array.isArray(cached.decks) ? cached.decks : null;
+  } catch (err) {
+    return null;
+  }
+}
+
+function writeDeckSummariesCache_(key, decks) {
+  try {
+    CacheService.getScriptCache().put(key, JSON.stringify({
+      expiresAt: Date.now() + DECK_SUMMARY_CACHE_TTL * 1000,
+      decks: decks
+    }), DECK_SUMMARY_CACHE_TTL);
+  } catch (err) {
+    // サイズ上限やキャッシュ障害時も、取得した一覧をそのまま返す。
+  }
+}
+
+/** 書き込み側のScriptLockを解放する前に呼び、古い集計の再保存を防ぐ。 */
+function invalidateDeckSummaries_() {
+  try {
+    CacheService.getScriptCache().remove(deckSummaryCacheKey_(today_()));
+  } catch (err) {
+    // キャッシュの利用可否はカード保存の成否に影響させない。
+  }
+}
+
+/** 保留中のシート書き込みを確定してからキャッシュを破棄し、必ずロックを解放する。 */
+function releaseSheetLock_(lock, invalidateSummaries) {
+  try {
+    SpreadsheetApp.flush();
+  } catch (err) {
+    invalidateSummaries = true;
+    throw err;
+  } finally {
+    if (invalidateSummaries) invalidateDeckSummaries_();
+    lock.releaseLock();
   }
 }
 

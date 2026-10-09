@@ -18,7 +18,7 @@ test('deck list exposes a new-deck button and modal', () => {
 });
 
 test('deck list loads registry-backed empty decks', () => {
-  assert.match(script, /callServer\('getDecksWithRegistry', \[\]/);
+  assert.match(script, /callServer\('getDecksWithRegistry', \[forceRefresh === true\]/);
 });
 
 test('creating a deck opens the new empty deck home', () => {

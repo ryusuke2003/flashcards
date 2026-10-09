@@ -41,6 +41,35 @@ function getTodayStudyCount(deckType) {
   }
 }
 
+/** getSessionのロック内で、取得済みカードから初期値を作る。参照先が複数でもシートを再読込しない。 */
+function todayStudyCountFromCards_(cards, deck, date) {
+  var stats = readDailyStudyStats_(date);
+  var keys = deck ? deck.sourceKeys : Object.keys(cards.reduce(function (all, card) {
+    all[deckKey_(card.type)] = true;
+    return all;
+  }, Object.create(null)));
+  var missing = Object.create(null);
+  keys.forEach(function (key) {
+    var property = dailyStudyDeckProperty_(key);
+    if (!Object.prototype.hasOwnProperty.call(stats, property)) missing[property] = 0;
+  });
+  var initialized = Object.keys(missing).length > 0;
+  if (initialized) {
+    cards.forEach(function (card) {
+      var property = dailyStudyDeckProperty_(deckKey_(card.type));
+      if (!Object.prototype.hasOwnProperty.call(missing, property)) return;
+      if (!String(card.front_side || '').trim() || !String(card.back_side || '').trim() ||
+          String(card.exclude || '').trim()) return;
+      if (normalizeDate_(card.last_seen) === date) missing[property]++;
+    });
+    Object.keys(missing).forEach(function (property) { stats[property] = missing[property]; });
+    writeDailyStudyStats_(date, stats, true);
+  }
+  return keys.reduce(function (total, key) {
+    return total + Math.max(0, Number(stats[dailyStudyDeckProperty_(key)]) || 0);
+  }, 0);
+}
+
 /** 所属を変更する前に両デッキの初期値を確定し、書き込み後に保存する関数を返す。 */
 function prepareDailyStudyDeckMove_(oldDeckKey, newDeckKey) {
   var today = today_();

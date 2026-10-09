@@ -28,6 +28,8 @@
     .sync-status{font-size:11px;color:var(--muted);margin-top:5px;min-height:16px}
     .sync-status.warn{color:var(--orange)}
     .screen-title{font-size:18px;font-weight:800;margin:2px 0 12px}
+    .decks-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px}
+    .decks-head .screen-title{margin:0}
     .screen-note{font-size:13px;color:var(--muted);line-height:1.6;margin:-4px 0 16px}
     .deck-list{display:flex;flex-direction:column;gap:10px}
     .deck-entry{display:flex;align-items:center;background:var(--card);border:1px solid var(--border);border-radius:var(--radius)}
@@ -121,8 +123,12 @@
     <main id="loading"><div class="spinner"></div></main>
 
     <main id="decks" class="hidden">
-      <div class="screen-title">デッキを選択</div>
+      <div class="decks-head">
+        <div class="screen-title">デッキを選択</div>
+        <button class="secondary compact" id="refresh-decks-btn" type="button">更新</button>
+      </div>
       <div class="screen-note">通常デッキを選ぶか、複数のデッキをまとめて学習できます。</div>
+      <p class="screen-note">Google Sheets を直接編集した後は「更新」を押してください。</p>
       <div id="deck-list" class="deck-list"></div>
       <div id="deck-empty" class="empty hidden">デッキがありません。<br>下のボタンから新規デッキを作成できます。</div>
       <button class="secondary" id="create-deck-btn" style="width:100%;margin-top:12px">＋ 新規デッキを作成</button>
@@ -395,23 +401,6 @@
     $('today-study-count').textContent = count == null ? '今日の学習 …' : '今日の学習 ' + count + '問';
   }
 
-  function refreshTodayStudyCount(deckKey) {
-    var key = studyCountKey(deckKey);
-    if (hasPendingForDeck(key)) return;
-    var revision = studyCountRevision;
-
-    google.script.run
-      .withSuccessHandler(function (result) {
-        if (!result || revision !== studyCountRevision || hasPendingForDeck(key)) return;
-        todayStudyCounts[key] = Math.max(0, Number(result.count) || 0);
-        if (currentDeck && studyCountKey(currentDeck.key) === key) renderTodayStudyCount(key);
-      })
-      .withFailureHandler(function () {
-        // 学習数の表示に失敗しても、学習そのものは止めない。
-      })
-      .getTodayStudyCount(key);
-  }
-
   function incrementTodayStudyCount(deckKey) {
     var key = studyCountKey(deckKey);
     todayStudyCounts[key] = Math.max(0, Number(todayStudyCounts[key]) || 0) + 1;
@@ -615,7 +604,7 @@
     refreshHomeFromServer(false);
   }
 
-  function loadDecks() {
+  function loadDecks(forceRefresh) {
     if (pendingDelete) {
       showToast('直前の削除を元に戻すか、削除が確定してからデッキを移動してください。');
       return;
@@ -627,7 +616,7 @@
     queue = [];
     index = 0;
     setScreen('loading');
-    callServer('getDecksWithRegistry', [], function (decks) {
+    callServer('getDecksWithRegistry', [forceRefresh === true], function (decks) {
       renderDecks(decks || []);
       setScreen('decks');
     });
@@ -740,7 +729,6 @@
     $('home-sources').textContent = sources.length ? '参照先：' + sources.map(function (source) { return source.name; }).join(' / ') : '参照するデッキを一覧の編集ボタンから選択してください。';
     $('add-card-btn').disabled = combined && !sources.length;
     renderTodayStudyCount(currentDeck.key);
-    if (!hasPendingForDeck(currentDeck.key)) refreshTodayStudyCount(currentDeck.key);
 
     $('due-count').textContent = data.counts.due || 0;
     $('new-count').textContent = data.counts.fresh || 0;
@@ -774,18 +762,28 @@
 
     var requestRevision = ++homeRequestRevision;
     var requestedScreenRevision = screenRevision;
+    var requestedStudyCountRevision = studyCountRevision;
     callServer('getSession', [requestedDeckKey], function (data) {
       if (!currentDeck || currentDeck.key !== requestedDeckKey) return;
       if (requestRevision !== homeRequestRevision || requestedScreenRevision !== screenRevision) return;
+      if (requestedStudyCountRevision !== studyCountRevision) return;
       if (hasPendingForDeck(requestedDeckKey)) {
         if (sessionData) renderHome(sessionData);
         return;
       }
 
-      sessionData = data;
-      if (data.deck) currentDeck = data.deck;
+      acceptSessionData(data);
       renderHome(data);
     });
+  }
+
+  function acceptSessionData(data) {
+    sessionData = data;
+    if (data && data.deck) currentDeck = data.deck;
+    if (data && data.todayStudyCount != null && currentDeck) {
+      studyCountRevision++;
+      todayStudyCounts[studyCountKey(currentDeck.key)] = Math.max(0, Number(data.todayStudyCount) || 0);
+    }
   }
 
   function loadHome() {
@@ -848,8 +846,7 @@
           !currentDeck || currentDeck.key !== requestedDeckKey) return;
 
       pendingNormalStartDeckKey = null;
-      sessionData = data;
-      if (data && data.deck) currentDeck = data.deck;
+      acceptSessionData(data);
 
       if (data && data.queue && data.queue.length) {
         startQueue(data.queue, 'normal');
@@ -1843,6 +1840,7 @@
   $('rename-deck-save').addEventListener('click', saveRenamedDeck);
   $('delete-deck-cancel').addEventListener('click', closeDeleteDeck);
   $('delete-deck-confirm').addEventListener('click', confirmDeleteDeck);
+  $('refresh-decks-btn').addEventListener('click', function () { loadDecks(true); });
   $('start-btn').addEventListener('click', startNormal);
   $('due-btn').addEventListener('click', startDue);
   $('mistakes-btn').addEventListener('click', startMistakes);

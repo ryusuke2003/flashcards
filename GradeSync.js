@@ -131,7 +131,7 @@ function gradeCardsQueued(events) {
       failed: failed
     };
   } finally {
-    lock.releaseLock();
+    releaseSheetLock_(lock, true);
   }
 }
 

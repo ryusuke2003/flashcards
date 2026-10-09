@@ -15,6 +15,6 @@ function deleteCardById(cardId, rowHint) {
     sheet.deleteRow(row);
     return { ok: true, deletedRow: row, cardId: id };
   } finally {
-    lock.releaseLock();
+    releaseSheetLock_(lock, true);
   }
 }

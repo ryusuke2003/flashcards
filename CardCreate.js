@@ -85,7 +85,7 @@ function createCard(deckType, input, sourceDeckId) {
       }
     };
   } finally {
-    lock.releaseLock();
+    releaseSheetLock_(lock, true);
   }
 }
 

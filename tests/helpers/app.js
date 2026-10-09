@@ -8,9 +8,11 @@ function makeSheet(initialRows, options = {}) {
   let columns = options.columns || Math.max(1, ...rows.map(row => row.length));
   let failAtRow = options.failAtRow || 0;
   let failClearAtRow = options.failClearAtRow || 0;
+  const operations = [];
   const ensureRow = index => { while (rows.length <= index) rows.push([]); return rows[index]; };
   return {
     rows,
+    operations,
     getLastRow() {
       for (let i = rows.length - 1; i >= 0; i--) {
         if (rows[i].some(value => value !== '' && value !== null)) return i + 1;
@@ -30,15 +32,17 @@ function makeSheet(initialRows, options = {}) {
       const write = values => values.forEach((entries, r) => entries.forEach((value, c) => {
         ensureRow(row - 1 + r)[column - 1 + c] = value;
       }));
+      const record = method => operations.push({ method, row, column, height, width });
       return {
-        getValues: read,
-        getDisplayValues: () => read().map(entries => entries.map(String)),
-        getDisplayValue: () => String(read()[0][0]),
+        getValues() { record('getValues'); return read(); },
+        getDisplayValues() { record('getDisplayValues'); return read().map(entries => entries.map(String)); },
+        getDisplayValue() { record('getDisplayValue'); return String(read()[0][0]); },
         setNumberFormat() { return this; },
-        setRichTextValue(value) { write([[value.text]]); return this; },
+        setRichTextValue(value) { record('setRichTextValue'); write([[value.text]]); return this; },
         setValue(value) { write([[value]]); return this; },
         setValues(values) { write(values); return this; },
         setRichTextValues(values) {
+          record('setRichTextValues');
           write(values.map(entries => entries.map(value => value.text)));
           if (failAtRow === row) { failAtRow = 0; throw new Error('write failed'); }
           return this;
@@ -58,6 +62,16 @@ function loadApp(cardEntries = [], deckEntries = [], stats = {}, options = {}) {
   const sheets = {};
   let nextId = 0;
   let locked = false;
+  let cacheTime = Date.now();
+  const cacheEntries = new Map();
+  const cache = {
+    get(key) {
+      const entry = cacheEntries.get(key);
+      return entry && entry.expiresAt > cacheTime ? entry.value : null;
+    },
+    put(key, value, seconds) { cacheEntries.set(key, { value, expiresAt: cacheTime + seconds * 1000 }); },
+    remove(key) { cacheEntries.delete(key); }
+  };
   const lock = {
     waitLock() { if (locked) throw new Error('nested lock'); locked = true; },
     releaseLock() { locked = false; }
@@ -70,7 +84,9 @@ function loadApp(cardEntries = [], deckEntries = [], stats = {}, options = {}) {
     },
     Session: { getScriptTimeZone: () => 'Asia/Tokyo' },
     LockService: { getScriptLock: () => lock },
+    CacheService: { getScriptCache: () => cache },
     SpreadsheetApp: {
+      flush() {},
       getActiveSpreadsheet: () => ({
         getSheetByName: name => sheets[name] || null,
         insertSheet(name) { return sheets[name] = makeSheet([[]], { columns: 1 }); },
@@ -97,7 +113,7 @@ function loadApp(cardEntries = [], deckEntries = [], stats = {}, options = {}) {
   const cards = sheets.cards = makeSheet([app.HEADERS, ...cardEntries], options);
   const decks = sheets.decks = makeSheet([options.legacySchema ? ['type', 'created'] : app.DECK_HEADERS, ...deckEntries], options.deckOptions);
   app.today_ = () => options.today || '2026-10-04';
-  return { app, cards, decks, properties };
+  return { app, cards, decks, properties, cache, advanceTime(milliseconds) { cacheTime += milliseconds; } };
 }
 
 function card(app, type, front = 'Q', back = 'A', exclude = '', overrides = {}) {
