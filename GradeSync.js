@@ -45,6 +45,7 @@ function gradeCardsQueued(events) {
   var normalized = events.slice(0, GRADE_BATCH_LIMIT).map(normalizeGradeEvent_);
   var lock = LockService.getScriptLock();
   lock.waitLock(15000);
+  var transactionStarted = false;
 
   try {
     var sheet = getSheet_();
@@ -74,16 +75,20 @@ function gradeCardsQueued(events) {
           return idIndex;
         });
 
-        if (event.practice || event.correct) {
-          if (markMistakeReviewedInState_(state.values)) state.dirty = true;
-        }
+        if (!state.originalValues) state.originalValues = state.values.slice();
+        // イベント途中の失敗で、完了履歴にない採点だけが残らないようコピーに反映する。
+        var values = state.values.slice();
+        var dirty = false;
+        if (event.practice || event.correct) dirty = markMistakeReviewedInState_(values);
 
         if (!event.practice) {
-          applyGradeToState_(state.values, event.correct, today);
-          state.dirty = true;
+          applyGradeToState_(values, event.correct, today);
+          dirty = true;
         }
 
-        incrementDailyStudyCount_(studyStats, sheet, today, state.values[COL.type - 1]);
+        incrementDailyStudyCount_(studyStats, sheet, today, values[COL.type - 1]);
+        state.values = values;
+        state.dirty = state.dirty || dirty;
         studyStatsDirty = true;
 
         historySet[event.eventId] = true;
@@ -97,32 +102,11 @@ function gradeCardsQueued(events) {
       }
     });
 
-    Object.keys(rowStates).forEach(function (rowKey) {
-      var state = rowStates[rowKey];
-      if (!state.dirty) return;
-
-      var row = Number(rowKey);
-      sheet.getRange(row, COL.box, 1, COL.last_wrong_reviewed - COL.box + 1).setValues([[
-        state.values[COL.box - 1],
-        state.values[COL.due - 1],
-        state.values[COL.last_seen - 1],
-        state.values[COL.right - 1],
-        state.values[COL.wrong - 1],
-        state.values[COL.added - 1],
-        state.values[COL.flag - 1],
-        state.values[COL.exclude - 1],
-        state.values[COL.last_wrong - 1],
-        state.values[COL.last_wrong_reviewed - 1]
-      ]]);
-    });
-
-    if (studyStatsDirty) writeDailyStudyStats_(today, studyStats, false);
-
     if (history.length > GRADE_EVENT_HISTORY_LIMIT) {
       history = history.slice(history.length - GRADE_EVENT_HISTORY_LIMIT);
     }
-    PropertiesService.getDocumentProperties()
-      .setProperty(GRADE_EVENT_HISTORY_KEY, JSON.stringify(history));
+    transactionStarted = true;
+    applyQueuedGradeChanges_(sheet, rowStates, today, studyStats, studyStatsDirty, history);
 
     return {
       ok: failed.length === 0,
@@ -131,7 +115,58 @@ function gradeCardsQueued(events) {
       failed: failed
     };
   } finally {
-    releaseSheetLock_(lock, true);
+    releaseSheetLock_(lock, true, !transactionStarted);
+  }
+}
+
+/** シートを確定してから完了を記録する。失敗時は部分反映も含めて復元し、同じイベントを再送可能にする。 */
+function applyQueuedGradeChanges_(sheet, rowStates, today, studyStats, studyStatsDirty, history) {
+  var attemptedRows = [];
+  var properties;
+  var statsKey;
+  var originalStats;
+  var originalHistory;
+  var attemptedStats = false;
+  var attemptedHistory = false;
+  try {
+    properties = PropertiesService.getDocumentProperties();
+    statsKey = dailyStudyDateProperty_(today);
+    originalStats = properties.getProperty(statsKey);
+    originalHistory = properties.getProperty(GRADE_EVENT_HISTORY_KEY);
+    Object.keys(rowStates).forEach(function (rowKey) {
+      var state = rowStates[rowKey];
+      if (!state.dirty) return;
+      var range = sheet.getRange(Number(rowKey), COL.box, 1, COL.last_wrong_reviewed - COL.box + 1);
+      // setValues自体が部分反映してから失敗する場合も復元対象に含める。
+      attemptedRows.push({ range: range, values: state.originalValues.slice(COL.box - 1, COL.last_wrong_reviewed) });
+      range.setValues([state.values.slice(COL.box - 1, COL.last_wrong_reviewed)]);
+    });
+    SpreadsheetApp.flush();
+    if (studyStatsDirty) {
+      attemptedStats = true;
+      writeDailyStudyStats_(today, studyStats, false);
+    }
+    attemptedHistory = true;
+    properties.setProperty(GRADE_EVENT_HISTORY_KEY, JSON.stringify(history));
+  } catch (err) {
+    var rollbackError = null;
+    function restore(action) {
+      try { action(); } catch (restoreErr) { rollbackError = restoreErr; }
+    }
+    attemptedRows.forEach(function (entry) {
+      restore(function () { entry.range.setValues([entry.values]); });
+    });
+    restore(function () { SpreadsheetApp.flush(); });
+    if (attemptedStats) restore(function () {
+      if (originalStats == null) properties.deleteProperty(statsKey);
+      else properties.setProperty(statsKey, originalStats);
+    });
+    if (attemptedHistory) restore(function () {
+      if (originalHistory == null) properties.deleteProperty(GRADE_EVENT_HISTORY_KEY);
+      else properties.setProperty(GRADE_EVENT_HISTORY_KEY, originalHistory);
+    });
+    if (rollbackError) throw new Error('採点の変更を元に戻せませんでした。cards シートと学習履歴を確認してください。');
+    throw err;
   }
 }
 

@@ -634,10 +634,10 @@ function invalidateDeckSummaries_() {
   }
 }
 
-/** 保留中のシート書き込みを確定してからキャッシュを破棄し、必ずロックを解放する。 */
-function releaseSheetLock_(lock, invalidateSummaries) {
+/** トランザクション側で確定済みなら再flushせず、キャッシュを破棄して必ずロックを解放する。 */
+function releaseSheetLock_(lock, invalidateSummaries, flushPendingChanges) {
   try {
-    SpreadsheetApp.flush();
+    if (flushPendingChanges !== false) SpreadsheetApp.flush();
   } catch (err) {
     invalidateSummaries = true;
     throw err;

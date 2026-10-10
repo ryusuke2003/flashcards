@@ -58,6 +58,7 @@ function createDeckRecord_(name, kind, sourceDeckIds) {
   var key = normalizeNewDeckName_(name);
   var lock = LockService.getScriptLock();
   lock.waitLock(15000);
+  var transactionStarted = false;
   try {
     prepareDeckRegistryFromCards_();
     var records = readDeckRecords_();
@@ -66,10 +67,12 @@ function createDeckRecord_(name, kind, sourceDeckIds) {
     var sheet = getDeckSheet_();
     var row = Math.max(2, sheet.getLastRow() + 1);
     var record = [key, today_(), 'deck-' + Utilities.getUuid(), kind, JSON.stringify(ids)];
-    applyDeckChanges_(getSheet_(), [], sheet, [{ row: row, values: record }]);
+    var cardsSheet = getSheet_();
+    transactionStarted = true;
+    applyDeckChanges_(cardsSheet, [], sheet, [{ row: row, values: record }]);
     return { ok: true, deck: deckSelection_(key, readDeckRecords_()) };
   } finally {
-    releaseSheetLock_(lock, true);
+    releaseSheetLock_(lock, true, !transactionStarted);
   }
 }
 
@@ -79,6 +82,7 @@ function updateCombinedDeck(oldName, newName, sourceDeckIds) {
   var newKey = normalizeNewDeckName_(newName);
   var lock = LockService.getScriptLock();
   lock.waitLock(15000);
+  var transactionStarted = false;
   try {
     prepareDeckRegistryFromCards_();
     var records = readDeckRecords_();
@@ -87,10 +91,13 @@ function updateCombinedDeck(oldName, newName, sourceDeckIds) {
     assertDeckNameAvailable_(newKey, records, record.id);
     var ids = validateSourceDeckIds_(sourceDeckIds, records, 0);
     var values = [newKey, record.created, record.id, 'combined', JSON.stringify(ids)];
-    applyDeckChanges_(getSheet_(), [], getDeckSheet_(), [{ row: record.row, values: values }]);
+    var cardsSheet = getSheet_();
+    var deckSheet = getDeckSheet_();
+    transactionStarted = true;
+    applyDeckChanges_(cardsSheet, [], deckSheet, [{ row: record.row, values: values }]);
     return { ok: true, deck: deckSelection_(newKey, readDeckRecords_()), movedCards: 0 };
   } finally {
-    releaseSheetLock_(lock, true);
+    releaseSheetLock_(lock, true, !transactionStarted);
   }
 }
 
@@ -101,6 +108,7 @@ function renameDeck(oldName, newName) {
   if (oldKey === newKey) throw new Error('現在と同じデッキ名です。');
   var lock = LockService.getScriptLock();
   lock.waitLock(15000);
+  var transactionStarted = false;
   try {
     prepareDeckRegistryFromCards_();
     var records = readDeckRecords_();
@@ -124,10 +132,11 @@ function renameDeck(oldName, newName) {
       });
     }
     var saveStudyCounts = !record || record.kind === 'normal' ? prepareDailyStudyDeckMove_(oldKey, newKey) : null;
+    transactionStarted = true;
     applyDeckChanges_(cardsSheet, cardsToMove, sheet, changes, saveStudyCounts);
     return { ok: true, deck: deckSelection_(newKey, readDeckRecords_()), movedCards: cardsToMove.length };
   } finally {
-    releaseSheetLock_(lock, true);
+    releaseSheetLock_(lock, true, !transactionStarted);
   }
 }
 
@@ -137,6 +146,7 @@ function deleteDeck(name) {
   if (!key) throw new Error('未分類デッキは削除できません。');
   var lock = LockService.getScriptLock();
   lock.waitLock(15000);
+  var transactionStarted = false;
   try {
     prepareDeckRegistryFromCards_();
     var records = readDeckRecords_();
@@ -152,10 +162,12 @@ function deleteDeck(name) {
       }
     });
     var saveStudyCounts = record.kind === 'normal' ? prepareDailyStudyDeckMove_(key, '') : null;
-    applyDeckChanges_(cardsSheet, moves, getDeckSheet_(), changes, saveStudyCounts);
+    var deckSheet = getDeckSheet_();
+    transactionStarted = true;
+    applyDeckChanges_(cardsSheet, moves, deckSheet, changes, saveStudyCounts);
     return { ok: true, movedCards: moves.length, kind: record.kind };
   } finally {
-    releaseSheetLock_(lock, true);
+    releaseSheetLock_(lock, true, !transactionStarted);
   }
 }
 
@@ -171,15 +183,20 @@ function deckCardRows_(sheet, oldKey, newKey) {
   return result;
 }
 
-/** 書き込み失敗時にはカードの所属と参照設定を一緒に復元する。呼び出し元がScriptLockを保持する。 */
+/** flushまでを復元対象とする。呼び出し元がScriptLockを保持し、完了後は再flushせずに解放する。 */
 function applyDeckChanges_(cardsSheet, cardEntries, deckSheet, changes, afterWrite) {
   var attemptedCards = [];
   var attemptedDecks = [];
-  var statsKey = dailyStudyDateProperty_(today_());
-  var properties = afterWrite ? PropertiesService.getDocumentProperties() : null;
-  var originalStats = properties ? properties.getProperty(statsKey) : null;
+  var statsKey;
+  var properties;
+  var originalStats;
   var attemptedStats = false;
   try {
+    if (afterWrite) {
+      statsKey = dailyStudyDateProperty_(today_());
+      properties = PropertiesService.getDocumentProperties();
+      originalStats = properties.getProperty(statsKey);
+    }
     groupConsecutiveDeckRows_(cardEntries).forEach(function (group) {
       attemptedCards = attemptedCards.concat(group);
       var range = cardsSheet.getRange(group[0].row, COL.type, group.length, 1);
@@ -198,21 +215,28 @@ function applyDeckChanges_(cardsSheet, cardEntries, deckSheet, changes, afterWri
       attemptedDecks.push({ row: change.row, values: original });
       writeDeckRow_(deckSheet, change.row, change.values);
     });
+    SpreadsheetApp.flush();
     if (afterWrite) {
       attemptedStats = true;
       afterWrite();
     }
   } catch (err) {
-    try {
-      attemptedDecks.reverse().forEach(function (entry) { writeDeckRow_(deckSheet, entry.row, entry.values); });
-      attemptedCards.forEach(function (entry) { setPlainTextValue_(cardsSheet.getRange(entry.row, COL.type), entry.original); });
-      if (attemptedStats) {
-        if (originalStats == null) properties.deleteProperty(statsKey);
-        else properties.setProperty(statsKey, originalStats);
-      }
-    } catch (rollbackErr) {
-      throw new Error('デッキの変更を元に戻せませんでした。cards と decks シートを確認してください。');
+    var rollbackError = null;
+    function restore(action) {
+      try { action(); } catch (restoreErr) { rollbackError = restoreErr; }
     }
+    attemptedDecks.reverse().forEach(function (entry) {
+      restore(function () { writeDeckRow_(deckSheet, entry.row, entry.values); });
+    });
+    attemptedCards.forEach(function (entry) {
+      restore(function () { setPlainTextValue_(cardsSheet.getRange(entry.row, COL.type), entry.original); });
+    });
+    restore(function () { SpreadsheetApp.flush(); });
+    if (attemptedStats) restore(function () {
+      if (originalStats == null) properties.deleteProperty(statsKey);
+      else properties.setProperty(statsKey, originalStats);
+    });
+    if (rollbackError) throw new Error('デッキの変更を元に戻せませんでした。cards と decks シートを確認してください。');
     throw err;
   }
 }
